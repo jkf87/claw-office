@@ -35,11 +35,17 @@ const REFRESH_MS = 30_000;
 const TIMEOUT_MS = 45_000;
 const readings = new Map<string, Reading>();
 const busy = new Set<string>();
+// SSH reads still under way, so a plugin reload can end them instead of waiting out their timeout.
+const children = new Set<import("node:child_process").ChildProcess>();
+let stopped = false;
 
 function run(def: MachineDef, input: string | null): Promise<string> {
   return new Promise((resolve, reject) => {
     const cmd = input === null ? "echo ok" : `${def.shell} -lc 'node -'`;
+    if (stopped) return reject(new Error("stopped"));
     const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", def.ssh, cmd], { stdio: ["pipe", "pipe", "pipe"] });
+    children.add(child);
+    child.on("exit", () => children.delete(child));
     let out = "";
     let err = "";
     const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
@@ -86,11 +92,23 @@ async function refresh(def: MachineDef) {
   }
 }
 
+/** Lets readings start again (the service started, or started again after a stop). */
+export function startMachines() {
+  stopped = false;
+}
+
+/** Ends every SSH read under way and starts no more (the plugin is being unloaded). */
+export function stopMachines() {
+  stopped = true;
+  for (const c of children) c.kill("SIGKILL");
+  children.clear();
+}
+
 /** The latest reading of each computer, starting a fresh one for any older than REFRESH_MS. */
 export function machines(now = Date.now()): Reading[] {
   return MACHINES.map((def) => {
     const r = readings.get(def.id);
-    if (!r || now - r.fetchedAt > REFRESH_MS) void refresh(def);
+    if (!stopped && (!r || now - r.fetchedAt > REFRESH_MS)) void refresh(def);
     return r ?? { id: def.id, label: def.label, reachable: false, error: "읽는 중", fetchedAt: 0, agents: [], sessions: [] };
   });
 }

@@ -1,11 +1,11 @@
 import { homedir } from "node:os";
 import { defineFeaturePlugin } from "openclaw/plugin-sdk/feature-plugin";
 import { contract } from "./contract.js";
-import { machines } from "./machines.js";
+import { machines, startMachines, stopMachines } from "./machines.js";
 import { scanSessions, type ScannedSession } from "./scan.js";
 import { trustFolder } from "./trust.js";
-import { machineStats } from "./stats.js";
-import { paseoAgents, paseoCreate, paseoImport, paseoPermit, paseoSend, paseoStop, paseoTimeline } from "./paseo.js";
+import { machineStats, startStats, stopStats } from "./stats.js";
+import { closePaseo, paseoAgents, paseoCreate, paseoImport, paseoPermit, paseoSend, paseoStop, paseoTimeline } from "./paseo.js";
 
 // Every open office tab polls this; one reading serves them all for CACHE_MS, and a reading already under
 // way is shared rather than started again, so the logs are read at most once per CACHE_MS however many tabs ask.
@@ -26,7 +26,21 @@ export default defineFeaturePlugin({
   contract,
   name: "Claw Office",
   description: "A 3D office of this computer's and the tailnet's agents in the Control UI.",
-  setup() {
+  setup(api) {
+    // Everything long-lived (SSH reads, Paseo connections) ends when the Gateway unloads or replaces the plugin,
+    // so a reload doesn't wait out their timeouts ("plugin host cleanup timed out").
+    api.registerService({
+      id: "claw-office-background",
+      start: () => {
+        startMachines();
+        startStats();
+      },
+      stop: async () => {
+        stopMachines();
+        stopStats();
+        await closePaseo();
+      },
+    });
     return {
       "local-sessions": async ({ hours }) => {
         const now = Date.now();

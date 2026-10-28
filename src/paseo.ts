@@ -122,6 +122,14 @@ function hostDef(hostId: string): HostDef {
   return def;
 }
 
+/** Closes every daemon connection (the plugin is being unloaded; its reconnect timers would otherwise keep it alive). */
+export async function closePaseo(): Promise<void> {
+  const all = [...conns.values()];
+  conns.clear();
+  cached = null;
+  await Promise.allSettled(all.map((c) => c.client.close()));
+}
+
 // ── Reading ──
 
 const one = (text: unknown, max = 160) => (typeof text === "string" ? text.replace(/\s+/g, " ").trim().slice(0, max) : "");

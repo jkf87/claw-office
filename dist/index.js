@@ -6839,10 +6839,15 @@ var REFRESH_MS = 3e4;
 var TIMEOUT_MS = 45e3;
 var readings = /* @__PURE__ */ new Map();
 var busy = /* @__PURE__ */ new Set();
+var children = /* @__PURE__ */ new Set();
+var stopped = false;
 function run(def, input2) {
   return new Promise((resolve, reject) => {
     const cmd = input2 === null ? "echo ok" : `${def.shell} -lc 'node -'`;
+    if (stopped) return reject(new Error("stopped"));
     const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", def.ssh, cmd], { stdio: ["pipe", "pipe", "pipe"] });
+    children.add(child);
+    child.on("exit", () => children.delete(child));
     let out = "";
     let err = "";
     const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
@@ -6888,10 +6893,18 @@ async function refresh(def) {
     busy.delete(def.id);
   }
 }
+function startMachines() {
+  stopped = false;
+}
+function stopMachines() {
+  stopped = true;
+  for (const c of children) c.kill("SIGKILL");
+  children.clear();
+}
 function machines(now = Date.now()) {
   return MACHINES.map((def) => {
     const r = readings.get(def.id);
-    if (!r || now - r.fetchedAt > REFRESH_MS) void refresh(def);
+    if (!stopped && (!r || now - r.fetchedAt > REFRESH_MS)) void refresh(def);
     return r ?? { id: def.id, label: def.label, reachable: false, error: "\uC77D\uB294 \uC911", fetchedAt: 0, agents: [], sessions: [] };
   });
 }
@@ -7119,14 +7132,22 @@ import { statfs } from "node:fs/promises";
 import { cpus, totalmem, uptime } from "node:os";
 var REFRESH_MS2 = 2e4;
 var TIMEOUT_MS2 = 3e4;
+var children2 = /* @__PURE__ */ new Set();
+var stopped2 = false;
 function run2(cmd, args) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: TIMEOUT_MS2, maxBuffer: 1 << 20 }, (err, out) => err ? reject(err) : resolve(String(out)));
+    if (stopped2) return reject(new Error("stopped"));
+    const child = execFile(cmd, args, { timeout: TIMEOUT_MS2, maxBuffer: 1 << 20 }, (err, out) => err ? reject(err) : resolve(String(out)));
+    children2.add(child);
+    child.on("exit", () => children2.delete(child));
   });
 }
 function ssh(host, command) {
   return new Promise((resolve, reject) => {
+    if (stopped2) return reject(new Error("stopped"));
     const child = spawn2("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, command], { stdio: ["ignore", "pipe", "pipe"] });
+    children2.add(child);
+    child.on("exit", () => children2.delete(child));
     let out = "";
     let err = "";
     const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS2);
@@ -7244,10 +7265,18 @@ async function refresh2(src) {
     busy2.delete(src.id);
   }
 }
+function startStats() {
+  stopped2 = false;
+}
+function stopStats() {
+  stopped2 = true;
+  for (const c of children2) c.kill("SIGKILL");
+  children2.clear();
+}
 function machineStats(now = Date.now()) {
   return SOURCES.map((src) => {
     const r = latest.get(src.id);
-    if (!r || now - r.at > REFRESH_MS2) void refresh2(src);
+    if (!stopped2 && (!r || now - r.at > REFRESH_MS2)) void refresh2(src);
     return r ?? { id: src.id, label: src.label, ok: false, error: "\uC77D\uB294 \uC911", at: 0, cores: 0, cpu: -1, memUsed: 0, memTotal: 0, diskUsed: 0, diskTotal: 0, uptime: -1, gpu: null };
   });
 }
@@ -142109,6 +142138,12 @@ function hostDef(hostId) {
   if (!def) throw new Error(`Paseo \uD638\uC2A4\uD2B8 ${hostId}\uB97C \uCC3E\uC9C0 \uBABB\uD588\uC5B4\uC694`);
   return def;
 }
+async function closePaseo() {
+  const all = [...conns.values()];
+  conns.clear();
+  cached2 = null;
+  await Promise.allSettled(all.map((c) => c.client.close()));
+}
 var one2 = (text, max = 160) => typeof text === "string" ? text.replace(/\s+/g, " ").trim().slice(0, max) : "";
 var short2 = (path) => typeof path === "string" ? basename2(path) : "";
 function describe3(name, detail, input2) {
@@ -142270,7 +142305,19 @@ var index_default = defineFeaturePlugin({
   contract,
   name: "Claw Office",
   description: "A 3D office of this computer's and the tailnet's agents in the Control UI.",
-  setup() {
+  setup(api) {
+    api.registerService({
+      id: "claw-office-background",
+      start: () => {
+        startMachines();
+        startStats();
+      },
+      stop: async () => {
+        stopMachines();
+        stopStats();
+        await closePaseo();
+      }
+    });
     return {
       "local-sessions": async ({ hours }) => {
         const now = Date.now();

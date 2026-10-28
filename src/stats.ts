@@ -28,16 +28,25 @@ export interface MachineStats {
 
 const REFRESH_MS = 20_000;
 const TIMEOUT_MS = 30_000;
+// Commands still running, so a plugin reload can end them instead of waiting out their timeout.
+const children = new Set<import("node:child_process").ChildProcess>();
+let stopped = false;
 
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: TIMEOUT_MS, maxBuffer: 1 << 20 }, (err, out) => (err ? reject(err) : resolve(String(out))));
+    if (stopped) return reject(new Error("stopped"));
+    const child = execFile(cmd, args, { timeout: TIMEOUT_MS, maxBuffer: 1 << 20 }, (err, out) => (err ? reject(err) : resolve(String(out))));
+    children.add(child);
+    child.on("exit", () => children.delete(child));
   });
 }
 
 function ssh(host: string, command: string): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (stopped) return reject(new Error("stopped"));
     const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, command], { stdio: ["ignore", "pipe", "pipe"] });
+    children.add(child);
+    child.on("exit", () => children.delete(child));
     let out = "";
     let err = "";
     const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
@@ -144,11 +153,23 @@ async function refresh(src: (typeof SOURCES)[number]) {
   }
 }
 
+/** Lets readings start again (the service started, or started again after a stop). */
+export function startStats() {
+  stopped = false;
+}
+
+/** Ends every reading under way and starts no more (the plugin is being unloaded). */
+export function stopStats() {
+  stopped = true;
+  for (const c of children) c.kill("SIGKILL");
+  children.clear();
+}
+
 /** The latest reading of every computer, starting a fresh one for any older than REFRESH_MS. */
 export function machineStats(now = Date.now()): MachineStats[] {
   return SOURCES.map((src) => {
     const r = latest.get(src.id);
-    if (!r || now - r.at > REFRESH_MS) void refresh(src);
+    if (!stopped && (!r || now - r.at > REFRESH_MS)) void refresh(src);
     return r ?? { id: src.id, label: src.label, ok: false, error: "읽는 중", at: 0, cores: 0, cpu: -1, memUsed: 0, memTotal: 0, diskUsed: 0, diskTotal: 0, uptime: -1, gpu: null };
   });
 }
