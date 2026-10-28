@@ -17,8 +17,8 @@ const KIND_LABEL: Record<CliKind | "openclaw" | "shell", string> = { claude: "Cl
 const STORE = "claw-office:terminals";
 const WIDTH_STORE = "claw-office:terminal-width";
 
-interface Tab { sessionId: string; title: string; term: Terminal; fit: FitAddon; el: HTMLElement; tabEl: HTMLElement; ended: boolean; href?: string }
-interface Saved { sessionId: string; title: string; href?: string }
+interface Tab { sessionId: string; title: string; term: Terminal; fit: FitAddon; el: HTMLElement; tabEl: HTMLElement; ended: boolean }
+interface Saved { sessionId: string; title: string }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -29,7 +29,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 
 export interface Terminals {
   /** Continues an existing session from the catalog in a new tab (in `cwd`, its folder, trusted first when known). */
-  openCatalog(loc: Locator, title: string, href?: string, cwd?: string): Promise<void>;
+  openCatalog(loc: Locator, title: string, cwd?: string): Promise<void>;
   /** Starts a fresh CLI, an OpenClaw agent's TUI or a shell in a new tab. */
   openNew(kind: CliKind | "openclaw" | "shell", opts: { cwd?: string; agentId?: string; sessionKey?: string; title?: string }): Promise<void>;
   /** The folder new sessions start in unless told otherwise (the latest session's, as the office learns it). */
@@ -154,7 +154,7 @@ export function mountTerminals(root: HTMLElement, host: ControlUiHost, signal: A
   };
 
   const save = () => {
-    const list: Saved[] = [...tabs.values()].filter((t) => !t.ended).map((t) => ({ sessionId: t.sessionId, title: t.title, href: t.href }));
+    const list: Saved[] = [...tabs.values()].filter((t) => !t.ended).map((t) => ({ sessionId: t.sessionId, title: t.title }));
     try { localStorage.setItem(STORE, JSON.stringify(list)); } catch { /* storage blocked */ }
   };
 
@@ -196,7 +196,7 @@ export function mountTerminals(root: HTMLElement, host: ControlUiHost, signal: A
   };
 
   /** Puts a Gateway terminal session in a tab, writing what it printed so far. */
-  const adopt = (sessionId: string, title: string, buffer = "", href?: string) => {
+  const adopt = (sessionId: string, title: string, buffer = "") => {
     if (tabs.has(sessionId)) return select(sessionId);
     const term = new Terminal({ fontFamily: 'ui-monospace, Menlo, "Apple SD Gothic Neo", monospace', fontSize: 13, cursorBlink: true, theme: { background: "#1e1e2e", foreground: "#cdd6f4", cursor: "#f5e0dc" }, scrollback: 5000, convertEol: false });
     const fit = new FitAddon();
@@ -212,20 +212,14 @@ export function mountTerminals(root: HTMLElement, host: ControlUiHost, signal: A
     name.type = "button";
     name.onclick = () => select(sessionId);
     tabEl.append(name);
-    if (href) {
-      const chat = el("button", "claw-term-tab-x", "💬");
-      chat.type = "button";
-      chat.title = "대화 화면으로 열기";
-      chat.onclick = () => location.assign(href);
-      tabEl.append(chat);
-    }
+    // (No jump to the Gateway's chat page from here: sessions open in Paseo or in this terminal, never the dashboard.)
     const x = el("button", "claw-term-tab-x", "×");
     x.type = "button";
     x.title = "터미널 닫기 (세션 종료)";
     x.onclick = () => close(sessionId);
     tabEl.append(x);
     tabsEl.append(tabEl);
-    tabs.set(sessionId, { sessionId, title, term, fit, el: box, tabEl, ended: false, href });
+    tabs.set(sessionId, { sessionId, title, term, fit, el: box, tabEl, ended: false });
     save();
     select(sessionId);
   };
@@ -252,7 +246,7 @@ export function mountTerminals(root: HTMLElement, host: ControlUiHost, signal: A
   const fail = (what: string, err: unknown) => say(`${what}: ${String((err as Error)?.message ?? err)}`, true);
 
   const api: Terminals = {
-    async openCatalog(loc, title, href, cwd) {
+    async openCatalog(loc, title, cwd) {
       show(true);
       try {
         // The CLI would stop to ask whether it may trust the folder; it's the session's own folder, so say yes for it.
@@ -276,7 +270,7 @@ export function mountTerminals(root: HTMLElement, host: ControlUiHost, signal: A
             await host.request("terminal.input", { sessionId: r.sessionId, data: `cd ${JSON.stringify(cwd)} && ${resume}\r` });
           }
         }
-        if (!signal.aborted) adopt(r.sessionId, title, "", href);
+        if (!signal.aborted) adopt(r.sessionId, title);
       } catch (err) { fail("터미널을 열지 못했어요", err); }
     },
     async openNew(k, opts) {
@@ -350,7 +344,7 @@ export function mountTerminals(root: HTMLElement, host: ControlUiHost, signal: A
         const r = await host.request<{ buffer?: string }>("terminal.attach", { sessionId: s.sessionId });
         if (signal.aborted) return;
         if (panel.hidden) show(true);
-        adopt(s.sessionId, s.title, r.buffer ?? "", s.href);
+        adopt(s.sessionId, s.title, r.buffer ?? "");
       } catch { /* gone: its detach window passed */ }
     }
     save();

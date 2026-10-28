@@ -78,7 +78,7 @@ export interface Desk {
   dispose(): void;
 }
 
-export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortSignal, onTerminal?: (agentId: string) => void, paseo?: DeskPaseo): Desk {
+export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortSignal, onTerminal?: (agentId: string, sessionKey?: string) => void, paseo?: DeskPaseo): Desk {
   const jobs = load();
   let agents: readonly AgentChoice[] = [];
   let paseoTargets: readonly AgentChoice[] = [];
@@ -324,7 +324,8 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
       if (q.sessionKey && q.agentId) {
         const open = el("button", "claw-office-btn", "대화 열기");
         open.type = "button";
-        open.onclick = () => host.sessions.open({ sessionKey: q.sessionKey!, agentId: q.agentId! });
+        // Its TUI in the terminal beside the office, not the dashboard's chat page.
+        open.onclick = () => onTerminal?.(q.agentId!, q.sessionKey!);
         acts.append(open);
       }
       card.append(acts);
@@ -342,7 +343,7 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
       const acts = el("div", "claw-office-card-acts");
       const open = el("button", "claw-office-btn is-primary", "결과 보기");
       open.type = "button";
-      open.onclick = () => { if (row) host.sessions.open({ sessionKey: row.key, agentId: j.agentId }); };
+      open.onclick = () => { if (row) onTerminal?.(j.agentId, row.key); };
       const ack = el("button", "claw-office-btn", "확인");
       ack.type = "button";
       ack.onclick = () => {
@@ -364,7 +365,7 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
         const row = sessionRow(j);
         if (row) {
           r.classList.add("is-link");
-          r.onclick = () => host.sessions.open({ sessionKey: row.key, agentId: j.agentId });
+          r.onclick = () => onTerminal?.(j.agentId, row.key);
         }
         parts.push(r);
       }

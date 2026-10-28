@@ -149,3 +149,8 @@
 .claw-chat-compose-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .claw-chat-interrupt { font-size: 12px; color: #6c6f85; display: flex; align-items: center; gap: 4px; }
 .claw-office-assign-label[hidden] { display: none; }
+/* Top right: where sessions open (Paseo by default, or a terminal) beside the briefing toggle. */
+.claw-office-topbar { position: absolute; z-index: 3; top: 16px; right: calc(var(--claw-term-w) + var(--claw-chat-w) + 16px); display: flex; gap: 8px; }
+.claw-office-topbar .claw-office-brief-toggle { position: static; }
+.claw-office-openmode { padding: 10px 14px; border: 0; border-radius: 999px; background: #2b2d42; color: #fffaf3; font: 700 13px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; box-shadow: 0 6px 24px rgba(43, 45, 66, 0.18); cursor: pointer; }
+.claw-office-openmode.is-terminal { background: #1e1e2e; color: #cdd6f4; }

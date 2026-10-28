@@ -238,14 +238,10 @@ export default defineControlUiPlugin({
             act.className = "claw-office-brief-act";
             act.textContent = s.actions.at(-1) ?? s.screen.at(-1) ?? "";
             row.append(top, what, act);
-            const href = sessionHref(s);
-            const pa = paseoOf(s);
-            if (pa) {
+            // Same as clicking the worker: Paseo or a terminal beside the office, never the dashboard's chat page.
+            if (canOpen(s)) {
               row.classList.add("is-link");
-              row.onclick = () => chat?.open(pa.hostId, pa.agentId, s.brief || s.name);
-            } else if (opens.has(s.key) || href) {
-              row.classList.add("is-link");
-              row.onclick = () => (href ? location.assign(href) : context.host.sessions.open(opens.get(s.key)!));
+              row.onclick = () => openSeat(s, "briefing");
             }
             return row;
           });
@@ -271,8 +267,8 @@ export default defineControlUiPlugin({
         // Paseo agents' conversations open beside the office; chat is set just below (the desk needs it first).
         let chat: ReturnType<typeof mountPaseoChat> | null = null;
         let paseoHosts: PaseoHost[] = [];
-        const desk = mountDesk(root, context.host, context.signal, (agentId) => {
-          const key = opens.get(`openclaw:${agentId}`)?.sessionKey;
+        const desk = mountDesk(root, context.host, context.signal, (agentId, sessionKey) => {
+          const key = sessionKey ?? opens.get(`openclaw:${agentId}`)?.sessionKey;
           void terms?.openNew("openclaw", { agentId, sessionKey: key, title: `OpenClaw · ${agents.find((a) => a.id === agentId)?.identity?.name ?? agentId}` });
         }, {
           permit: async (w, a) => {
@@ -337,13 +333,6 @@ export default defineControlUiPlugin({
           const logs = seat.machine === HOME.id ? locals : remotes.find((r) => r.id === seat.machine)?.sessions ?? [];
           return { hostId: seat.machine, provider: seat.tool, sessionId, cwd: logs.find((l) => l.id === sessionId)?.cwd || undefined };
         };
-        /** This computer's Claude Code and Codex sessions open in the Gateway's own session catalog (Chat, read and continue). */
-        const sessionHref = (seat: Seat): string | null => {
-          if (seat.machine !== HOME.id || (seat.tool !== "claude" && seat.tool !== "codex")) return null;
-          const thread = seat.key.split(":").slice(2).join(":");
-          const agent = context.host.agents.defaultId ?? "main";
-          return `${context.host.basePath.replace(/\/$/, "")}/chat/${encodeURIComponent(agent)}?catalog=${seat.tool}&host=${encodeURIComponent("gateway:local")}&thread=${encodeURIComponent(thread)}`;
-        };
 
         /** Where a desk's session lives in the Gateway's catalog, to continue it in a terminal; null for an OpenClaw agent. */
         const locatorOf = (seat: Seat): Locator | null => {
@@ -390,39 +379,6 @@ export default defineControlUiPlugin({
           (hud.querySelector(".claw-office-counts") as HTMLElement).textContent = lines.join("  ·  ");
         };
 
-        // A two-way question over the office (take a session into Paseo, or keep the old terminal way).
-        const choose = (heading: string, text: string, options: { label: string; primary?: boolean; run: () => void }[]) => {
-          const veil = document.createElement("div");
-          veil.className = "claw-office-veil";
-          const box = document.createElement("div");
-          box.className = "claw-office-assign";
-          box.setAttribute("role", "dialog");
-          box.setAttribute("aria-modal", "true");
-          const h = document.createElement("h2");
-          h.textContent = heading;
-          const p = document.createElement("p");
-          p.className = "claw-office-assign-note";
-          p.style.margin = "0";
-          p.textContent = text;
-          const row = document.createElement("div");
-          row.className = "claw-office-assign-row";
-          const done = () => veil.remove();
-          for (const o of [...options, { label: "닫기", run: () => undefined }]) {
-            const b = document.createElement("button");
-            b.type = "button";
-            b.className = `claw-office-btn${"primary" in o && o.primary ? " is-primary" : ""}`;
-            b.textContent = o.label;
-            b.onclick = () => { done(); o.run(); };
-            row.append(b);
-          }
-          box.append(h, p, row);
-          veil.append(box);
-          veil.onclick = (e) => { if (e.target === veil) done(); };
-          box.onkeydown = (e) => { if (e.key === "Escape") done(); };
-          root.append(veil);
-          (row.querySelector(".is-primary") as HTMLButtonElement | null)?.focus();
-        };
-
         const takeIntoPaseo = async (seat: Seat, imp: NonNullable<ReturnType<typeof importable>>) => {
           try {
             const r = await feature.invoke("paseo-import", imp);
@@ -434,46 +390,76 @@ export default defineControlUiPlugin({
           }
         };
 
+        // Where a Claude Code / Codex session opens when clicked: Paseo (default) or a terminal beside the office.
+        // Nothing jumps to the dashboard's chat page any more. A session Paseo already runs always opens in Paseo,
+        // since resuming it in a terminal would start a second process on the same conversation.
+        const OPEN_STORE = "claw-office:open-with";
+        let openWith: "paseo" | "terminal" = (() => {
+          try { return localStorage.getItem(OPEN_STORE) === "terminal" ? "terminal" : "paseo"; } catch { return "paseo"; }
+        })();
+        const openMode = document.createElement("button");
+        openMode.type = "button";
+        openMode.className = "claw-office-openmode";
+        const drawOpenMode = () => {
+          openMode.textContent = openWith === "paseo" ? "열기: Paseo" : "열기: 터미널";
+          openMode.title = openWith === "paseo" ? "세션을 누르면 Paseo 대화 창으로 열어요 (눌러서 터미널로 바꾸기)" : "세션을 누르면 옆 터미널에서 이어 가요 (눌러서 Paseo로 바꾸기)";
+          openMode.classList.toggle("is-terminal", openWith === "terminal");
+        };
+        openMode.onclick = () => {
+          openWith = openWith === "paseo" ? "terminal" : "paseo";
+          try { localStorage.setItem(OPEN_STORE, openWith); } catch { /* storage blocked: this visit only */ }
+          drawOpenMode();
+          desk.say(openWith === "paseo" ? "이제 세션을 누르면 Paseo로 열어요." : "이제 세션을 누르면 터미널로 열어요. (Paseo가 맡은 세션은 계속 Paseo로 열려요)");
+        };
+        drawOpenMode();
+        const topbar = document.createElement("div");
+        topbar.className = "claw-office-topbar";
+        toggle.replaceWith(topbar);
+        topbar.append(openMode, toggle);
+
+        const termTitle = (seat: Seat) => `${seat.name}${seat.brief ? ` · ${seat.brief.slice(0, 24)}` : ""}`;
+        const inTerminal = (seat: Seat, loc: Locator) => {
+          const cwd = seat.machine === HOME.id ? locals.find((l) => l.id === loc.threadId)?.cwd : undefined;
+          void terms?.openCatalog(loc, termTitle(seat), cwd);
+        };
+        /** Whether clicking does anything for this worker (another computer's OpenClaw agent only shows what it's doing). */
+        const canOpen = (seat: Seat) => seat.key.startsWith("openclaw:") || !!paseoOf(seat) || !!importable(seat) || !!locatorOf(seat);
+
+        const openSeat = (seat: Seat, from: "office" | "briefing") => {
+          // OpenClaw agents: a click in the office gives them work; from the briefing, their own TUI in the terminal.
+          if (seat.key.startsWith("openclaw:")) {
+            const agentId = seat.key.slice("openclaw:".length);
+            if (from === "office") return desk.assign(agentId);
+            return void terms?.openNew("openclaw", { agentId, sessionKey: opens.get(seat.key)?.sessionKey, title: `OpenClaw · ${seat.name}` });
+          }
+          const pa = paseoOf(seat);
+          if (pa) return chat?.open(pa.hostId, pa.agentId, seat.brief || seat.name);
+          const loc = locatorOf(seat);
+          const imp = importable(seat);
+          if (openWith === "paseo" && imp) {
+            // Still writing in some terminal: taking it now would put two processes on one conversation.
+            if (seat.status === "working") return desk.say(`${seat.name}은(는) 지금 다른 터미널에서 일하는 중이에요. 그 claude를 끝낸 뒤 다시 누르면 Paseo로 가져와요.`, true);
+            return void takeIntoPaseo(seat, imp);
+          }
+          if (openWith === "paseo" && (seat.tool === "claude" || seat.tool === "codex") && loc) desk.say(`${machineLabel(seat.machine)}에 Paseo가 연결돼 있지 않아 터미널로 열었어요.`);
+          if (loc) {
+            if (seat.status === "working") desk.say(`${seat.name}은(는) 다른 곳에서도 일하는 중이에요. 터미널 쪽 입력은 그 세션에 함께 들어가요.`);
+            return inTerminal(seat, loc);
+          }
+        };
+
         office.onHover = (seat) => {
           tip.hidden = !seat;
           if (!seat) return;
-          const how = seat.key.startsWith("openclaw:") ? "  (눌러서 일 맡기기)" : paseoOf(seat) ? (seat.status === "needs_input" ? "  (눌러서 권한 답하기)" : "  (눌러서 대화 이어 가기)") : importable(seat) ? "  (눌러서 Paseo로 가져오기)" : locatorOf(seat) ? "  (눌러서 옆 터미널에서 이어 가기)" : seat.machine !== HOME.id ? `  (${machineLabel(seat.machine)} 노드가 연결되면 열 수 있어요)` : "";
+          const imp = importable(seat);
+          const how = seat.key.startsWith("openclaw:") ? "  (눌러서 일 맡기기)"
+            : paseoOf(seat) ? (seat.status === "needs_input" ? "  (눌러서 권한 답하기)" : "  (눌러서 Paseo로 이어 가기)")
+            : openWith === "paseo" && imp ? "  (눌러서 Paseo로 가져와 이어 가기)"
+            : locatorOf(seat) ? "  (눌러서 옆 터미널에서 이어 가기)"
+            : seat.machine !== HOME.id ? `  (${machineLabel(seat.machine)}에 Paseo나 노드가 연결되면 열 수 있어요)` : "";
           tip.textContent = `${machineLabel(seat.machine)} · ${seat.name} — ${seat.brief || seat.card}${seat.actions.length ? ` · ${seat.actions.at(-1)}` : ""}${how}`;
         };
-        office.onPick = (seat) => {
-          const open = opens.get(seat.key);
-          // An OpenClaw agent here takes work; a session or another computer's agent only shows what it's doing.
-          // This computer's Claude Code and Codex sessions open in the Gateway's session catalog.
-          // Claude Code, Codex, AGY and GJC sessions continue in a terminal beside the office, straight away; one
-          // still at work elsewhere gets a passing notice instead of a question.
-          const loc = locatorOf(seat);
-          const pa = paseoOf(seat);
-          const imp = importable(seat);
-          if (seat.key.startsWith("openclaw:")) desk.assign(seat.key.slice("openclaw:".length));
-          // Paseo runs it: its conversation (and any permission waiting) opens beside the office.
-          else if (pa) chat?.open(pa.hostId, pa.agentId, seat.brief || seat.name);
-          // A session from the logs on a computer with Paseo: take it into Paseo (one session from then on), or the old terminal.
-          else if (imp) {
-            const busy = seat.status === "working";
-            choose(
-              `${seat.name} 이어 가기`,
-              busy
-                ? "이 세션은 지금 다른 터미널에서 일하는 중이에요. Paseo로 가져오면 같은 대화를 두 프로세스가 이어 쓰게 되니, 그 터미널의 claude를 먼저 끝낸 뒤 가져오세요."
-                : "Paseo로 가져오면 이 세션을 Paseo가 맡아서, 여기 대화 창·🔔 권한 받은함·Paseo 앱이 모두 같은 세션으로 이어져요. 가져온 뒤에는 터미널에서 따로 --resume 하지 마세요.",
-              [
-                ...(busy ? [] : [{ label: "Paseo로 가져와서 이어 가기", primary: true, run: () => void takeIntoPaseo(seat, imp) }]),
-                ...(loc ? [{ label: "터미널에서 열기 (기존 방식)", run: () => {
-                  const cwd = seat.machine === HOME.id ? locals.find((l) => l.id === loc.threadId)?.cwd : undefined;
-                  void terms?.openCatalog(loc, `${seat.name}${seat.brief ? ` · ${seat.brief.slice(0, 24)}` : ""}`, sessionHref(seat) ?? undefined, cwd);
-                } }] : []),
-              ],
-            );
-          } else if (loc) {
-            if (seat.status === "working") desk.say(`${seat.name}은(는) 다른 곳에서도 일하는 중이에요. 터미널 쪽 입력은 그 세션에 함께 들어가요.`);
-            const cwd = seat.machine === HOME.id ? locals.find((l) => l.id === loc.threadId)?.cwd : undefined;
-            void terms?.openCatalog(loc, `${seat.name}${seat.brief ? ` · ${seat.brief.slice(0, 24)}` : ""}`, sessionHref(seat) ?? undefined, cwd);
-          } else if (open) context.host.sessions.open(open);
-        };
+        office.onPick = (seat) => openSeat(seat, "office");
 
         const sub = context.host.sessions.observe({ configuredAgentsOnly: true, archived: false, limit: 80, includeDerivedTitles: true }, (snap) => {
           if (snap.result) sessions = snap.result.sessions;
