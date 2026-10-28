@@ -5,7 +5,7 @@ import { machines, startMachines, stopMachines } from "./machines.js";
 import { scanSessions, type ScannedSession } from "./scan.js";
 import { trustFolder } from "./trust.js";
 import { machineStats, startStats, stopStats } from "./stats.js";
-import { closePaseo, paseoAgents, paseoCreate, paseoImport, paseoPermit, paseoSend, paseoStop, paseoTimeline } from "./paseo.js";
+import { closePaseo, paseoAgents, paseoCreate, paseoImport, paseoPermit, paseoSend, paseoSetMode, paseoStop, paseoTimeline } from "./paseo.js";
 
 // Every open office tab polls this; one reading serves them all for CACHE_MS, and a reading already under
 // way is shared rather than started again, so the logs are read at most once per CACHE_MS however many tabs ask.
@@ -53,6 +53,7 @@ export default defineFeaturePlugin({
       "paseo-timeline": ({ hostId, agentId, limit }) => paseoTimeline(hostId, agentId, limit ?? 60),
       "paseo-send": async ({ hostId, agentId, text, interrupt }) => (await paseoSend(hostId, agentId, text, interrupt ?? false), { ok: true }),
       "paseo-permit": async ({ hostId, agentId, requestId, allow, actionId, acceptEdits, message }) => (await paseoPermit(hostId, agentId, requestId, { allow, actionId, acceptEdits, message }), { ok: true }),
+      "paseo-mode": async ({ hostId, agentId, mode }) => (await paseoSetMode(hostId, agentId, mode), { ok: true }),
       "paseo-stop": async ({ hostId, agentId }) => (await paseoStop(hostId, agentId), { ok: true }),
       "paseo-create": async (input) => ({ agentId: await paseoCreate(input) }),
       "paseo-import": async (input) => ({ agentId: await paseoImport(input) }),

@@ -68,6 +68,8 @@ export interface PaseoAgentRow {
   attention: string;
   lastError: string;
   permissions: PaseoPermission[];
+  /** The permission modes this agent's provider offers (Claude Code: plan, default, acceptEdits, auto, bypassPermissions). */
+  modes: { id: string; label: string }[];
 }
 
 export interface PaseoHostReading { id: string; label: string; connected: boolean; error: string; agents: PaseoAgentRow[] }
@@ -169,7 +171,7 @@ function permissionRow(p: RawPermission): PaseoPermission {
   };
 }
 
-type RawAgent = { id: string; provider: string; model?: string | null; cwd: string; title?: string | null; status: string; currentModeId?: string | null; updatedAt: string; archivedAt?: string | null; pendingPermissions?: RawPermission[]; persistence?: { sessionId?: string } | null; runtimeInfo?: { sessionId?: string | null } | null; requiresAttention?: boolean; attentionReason?: string | null; lastError?: string | null };
+type RawAgent = { id: string; provider: string; model?: string | null; cwd: string; title?: string | null; status: string; currentModeId?: string | null; updatedAt: string; archivedAt?: string | null; pendingPermissions?: RawPermission[]; persistence?: { sessionId?: string } | null; runtimeInfo?: { sessionId?: string | null } | null; requiresAttention?: boolean; attentionReason?: string | null; lastError?: string | null; availableModes?: { id: string; label: string }[] | null };
 
 function agentRow(a: RawAgent): PaseoAgentRow {
   return {
@@ -186,6 +188,7 @@ function agentRow(a: RawAgent): PaseoAgentRow {
     attention: a.requiresAttention ? a.attentionReason ?? "attention" : "",
     lastError: one(a.lastError, 240),
     permissions: (a.pendingPermissions ?? []).map(permissionRow),
+    modes: (a.availableModes ?? []).slice(0, 12).map((m) => ({ id: String(m.id).slice(0, 80), label: String(m.label ?? m.id).slice(0, 80) })),
   };
 }
 
@@ -262,6 +265,13 @@ export async function paseoPermit(hostId: string, agentId: string, requestId: st
   forget();
 }
 
+/** Switches the agent's permission mode (ask every time, accept edits, auto review, bypass, plan); applies from its next tool call. */
+export async function paseoSetMode(hostId: string, agentId: string, modeId: string): Promise<void> {
+  const client = await connected(hostDef(hostId));
+  await client.setAgentMode(agentId, modeId);
+  forget();
+}
+
 export async function paseoStop(hostId: string, agentId: string): Promise<void> {
   const client = await connected(hostDef(hostId));
   await client.cancelAgent(agentId);
@@ -283,9 +293,11 @@ export async function paseoCreate(input: { hostId: string; provider: "claude" | 
 }
 
 /** Brings a session started outside Paseo (in a terminal, say) under Paseo, so the office can drive it. */
-export async function paseoImport(input: { hostId: string; provider: "claude" | "codex"; sessionId: string; cwd?: string }): Promise<string> {
+export async function paseoImport(input: { hostId: string; provider: "claude" | "codex"; sessionId: string; cwd?: string; mode?: string }): Promise<string> {
   const client = await connected(hostDef(input.hostId));
   const snap = await client.importAgent({ provider: input.provider, sessionId: input.sessionId, ...(input.cwd ? { cwd: input.cwd } : {}), labels: { "claw-office": "1" } });
+  // An imported session starts in Paseo's default for it; the office's chosen mode applies from its next turn.
+  if (input.mode && snap.currentModeId !== input.mode) await client.setAgentMode(snap.id, input.mode).catch(() => undefined);
   forget();
   return snap.id;
 }

@@ -154,3 +154,8 @@
 .claw-office-topbar .claw-office-brief-toggle { position: static; }
 .claw-office-openmode { padding: 10px 14px; border: 0; border-radius: 999px; background: #2b2d42; color: #fffaf3; font: 700 13px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; box-shadow: 0 6px 24px rgba(43, 45, 66, 0.18); cursor: pointer; }
 .claw-office-openmode.is-terminal { background: #1e1e2e; color: #cdd6f4; }
+/* Permission modes: the default for new sessions (top right) and each session's own (conversation header). */
+.claw-office-defmode { padding: 9px 12px; border: 0; border-radius: 999px; background: rgba(255, 250, 243, 0.94); color: #2b2d42; font: 700 13px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; box-shadow: 0 6px 24px rgba(43, 45, 66, 0.18); cursor: pointer; }
+.claw-chat-mode { flex: none; max-width: 160px; padding: 6px 8px; border: 1px solid #c9ccd6; border-radius: 8px; background: #fff; color: #2b2d42; font: 600 12px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; }
+.claw-chat-mode[hidden] { display: none; }
+@media (max-width: 720px) { .claw-office-defmode { max-width: 130px; } .claw-chat-mode { max-width: 110px; } }

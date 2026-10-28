@@ -72,6 +72,7 @@ const PaseoAgent = Type.Object({
   attention: Type.String({ maxLength: 40 }),
   lastError: Type.String({ maxLength: 240 }),
   permissions: Type.Array(PaseoPermission, { maxItems: 16 }),
+  modes: Type.Array(Type.Object({ id: Type.String({ maxLength: 80 }), label: Type.String({ maxLength: 80 }) }), { maxItems: 12 }),
 });
 
 const PaseoHost = Type.Object({
@@ -178,8 +179,15 @@ export const contract = defineFeatureContract({
         provider: Cli,
         sessionId: Type.String({ minLength: 1, maxLength: 120 }),
         cwd: Type.Optional(Type.String({ maxLength: 4096 })),
+        mode: Type.Optional(Type.String({ maxLength: 80 })),
       }, { additionalProperties: false }),
       output: Type.Object({ agentId: Type.String({ maxLength: 120 }) }),
+    },
+    "paseo-mode": {
+      kind: "action",
+      description: "Switch a Paseo agent's permission mode (default = ask every time, acceptEdits, auto, bypassPermissions, plan).",
+      input: Type.Object({ ...HostAgent, mode: Type.String({ minLength: 1, maxLength: 80 }) }, { additionalProperties: false }),
+      output: Ok,
     },
   },
   events: {},

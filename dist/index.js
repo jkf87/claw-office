@@ -6714,7 +6714,8 @@ var PaseoAgent = typebox_exports.Object({
   sessionId: typebox_exports.String({ maxLength: 120 }),
   attention: typebox_exports.String({ maxLength: 40 }),
   lastError: typebox_exports.String({ maxLength: 240 }),
-  permissions: typebox_exports.Array(PaseoPermission, { maxItems: 16 })
+  permissions: typebox_exports.Array(PaseoPermission, { maxItems: 16 }),
+  modes: typebox_exports.Array(typebox_exports.Object({ id: typebox_exports.String({ maxLength: 80 }), label: typebox_exports.String({ maxLength: 80 }) }), { maxItems: 12 })
 });
 var PaseoHost = typebox_exports.Object({
   id: typebox_exports.String({ maxLength: 40 }),
@@ -6816,9 +6817,16 @@ var contract = defineFeatureContract({
         hostId: typebox_exports.String({ minLength: 1, maxLength: 40 }),
         provider: Cli,
         sessionId: typebox_exports.String({ minLength: 1, maxLength: 120 }),
-        cwd: typebox_exports.Optional(typebox_exports.String({ maxLength: 4096 }))
+        cwd: typebox_exports.Optional(typebox_exports.String({ maxLength: 4096 })),
+        mode: typebox_exports.Optional(typebox_exports.String({ maxLength: 80 }))
       }, { additionalProperties: false }),
       output: typebox_exports.Object({ agentId: typebox_exports.String({ maxLength: 120 }) })
+    },
+    "paseo-mode": {
+      kind: "action",
+      description: "Switch a Paseo agent's permission mode (default = ask every time, acceptEdits, auto, bypassPermissions, plan).",
+      input: typebox_exports.Object({ ...HostAgent, mode: typebox_exports.String({ minLength: 1, maxLength: 80 }) }, { additionalProperties: false }),
+      output: Ok
     }
   },
   events: {}
@@ -142198,7 +142206,8 @@ function agentRow(a) {
     sessionId: a.persistence?.sessionId ?? a.runtimeInfo?.sessionId ?? "",
     attention: a.requiresAttention ? a.attentionReason ?? "attention" : "",
     lastError: one2(a.lastError, 240),
-    permissions: (a.pendingPermissions ?? []).map(permissionRow)
+    permissions: (a.pendingPermissions ?? []).map(permissionRow),
+    modes: (a.availableModes ?? []).slice(0, 12).map((m) => ({ id: String(m.id).slice(0, 80), label: String(m.label ?? m.id).slice(0, 80) }))
   };
 }
 async function readHost(def) {
@@ -142264,6 +142273,11 @@ async function paseoPermit(hostId, agentId, requestId, answer) {
   await client.respondToPermission(agentId, requestId, response);
   forget();
 }
+async function paseoSetMode(hostId, agentId, modeId) {
+  const client = await connected(hostDef(hostId));
+  await client.setAgentMode(agentId, modeId);
+  forget();
+}
 async function paseoStop(hostId, agentId) {
   const client = await connected(hostDef(hostId));
   await client.cancelAgent(agentId);
@@ -142285,6 +142299,7 @@ async function paseoCreate(input2) {
 async function paseoImport(input2) {
   const client = await connected(hostDef(input2.hostId));
   const snap = await client.importAgent({ provider: input2.provider, sessionId: input2.sessionId, ...input2.cwd ? { cwd: input2.cwd } : {}, labels: { "claw-office": "1" } });
+  if (input2.mode && snap.currentModeId !== input2.mode) await client.setAgentMode(snap.id, input2.mode).catch(() => void 0);
   forget();
   return snap.id;
 }
@@ -142330,6 +142345,7 @@ var index_default = defineFeaturePlugin({
       "paseo-timeline": ({ hostId, agentId, limit }) => paseoTimeline(hostId, agentId, limit ?? 60),
       "paseo-send": async ({ hostId, agentId, text, interrupt }) => (await paseoSend(hostId, agentId, text, interrupt ?? false), { ok: true }),
       "paseo-permit": async ({ hostId, agentId, requestId, allow, actionId, acceptEdits, message: message2 }) => (await paseoPermit(hostId, agentId, requestId, { allow, actionId, acceptEdits, message: message2 }), { ok: true }),
+      "paseo-mode": async ({ hostId, agentId, mode }) => (await paseoSetMode(hostId, agentId, mode), { ok: true }),
       "paseo-stop": async ({ hostId, agentId }) => (await paseoStop(hostId, agentId), { ok: true }),
       "paseo-create": async (input2) => ({ agentId: await paseoCreate(input2) }),
       "paseo-import": async (input2) => ({ agentId: await paseoImport(input2) })

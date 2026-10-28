@@ -1,5 +1,6 @@
 import type { FeatureClient, FeatureOutput } from "openclaw/plugin-sdk/feature-contract";
 import type { contract } from "./contract.js";
+import { modeLabel } from "./modes";
 
 // The conversation panel for a Paseo agent: what was asked, what it answered, one line per tool call, and its
 // permission requests as buttons. What you type goes into that same running session through Paseo (no second
@@ -24,7 +25,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 }
 
 const STATUS: Record<string, string> = { running: "일하는 중", idle: "대기", initializing: "준비 중", error: "오류", closed: "닫힘" };
-const MODE: Record<string, string> = { default: "매번 묻기", acceptEdits: "편집 자동 허용", auto: "자동 검토", plan: "계획", bypassPermissions: "모두 허용" };
 const time = (ms: number) => (ms ? new Date(ms).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "");
 
 export interface PermitAnswer { allow: boolean; actionId?: string; acceptEdits?: boolean }
@@ -84,7 +84,11 @@ export function mountPaseoChat(root: HTMLElement, feature: Feature, signal: Abor
   close.type = "button";
   const titles = el("div", "claw-chat-titles");
   titles.append(titleEl, meta);
-  head.append(titles, stop, close);
+  // This session's permission mode, switched in place (applies from its next tool call).
+  const modeSel = el("select", "claw-chat-mode");
+  modeSel.setAttribute("aria-label", "권한 모드");
+  modeSel.title = "이 세션의 권한 모드 (다음 도구 호출부터 적용)";
+  head.append(titles, modeSel, stop, close);
   const list = el("div", "claw-chat-list");
   list.setAttribute("role", "log");
   list.setAttribute("aria-live", "polite");
@@ -161,6 +165,35 @@ export function mountPaseoChat(root: HTMLElement, feature: Feature, signal: Abor
     }
   };
 
+  let modeKey = "";
+  const drawModes = (a: Agent | null) => {
+    modeSel.hidden = !a?.modes.length;
+    if (!a) return;
+    const key = `${a.id}|${a.mode}|${a.modes.map((m) => m.id).join(",")}`;
+    if (key === modeKey || document.activeElement === modeSel) return;
+    modeKey = key;
+    modeSel.replaceChildren(...a.modes.map((m) => new Option(`모드: ${modeLabel(m.id, m.label)}`, m.id)));
+    modeSel.value = a.mode;
+  };
+  modeSel.onchange = async () => {
+    const c = current;
+    if (!c) return;
+    const mode = modeSel.value;
+    modeSel.disabled = true;
+    try {
+      await feature.invoke("paseo-mode", { hostId: c.hostId, agentId: c.agentId, mode });
+      say(`이 세션을 '${modeLabel(mode)}' 모드로 바꿨어요. 다음 도구 호출부터 적용돼요.`);
+      modeKey = "";
+      lastKey = "";
+      void load();
+    } catch (err) {
+      say(`모드를 바꾸지 못했어요: ${String((err as Error)?.message ?? err)}`, true);
+      modeKey = "";
+    } finally {
+      modeSel.disabled = false;
+    }
+  };
+
   const answer = async (p: Permission, a: PermitAnswer) => {
     if (!current) return;
     try {
@@ -174,7 +207,8 @@ export function mountPaseoChat(root: HTMLElement, feature: Feature, signal: Abor
   const draw = (t: Timeline) => {
     const a = t.agent;
     titleEl.textContent = a?.title || current?.title || "Paseo 에이전트";
-    meta.textContent = a ? [STATUS[a.status] ?? a.status, a.provider === "codex" ? "Codex" : "Claude Code", a.project, a.mode ? `모드 ${MODE[a.mode] ?? a.mode}` : ""].filter(Boolean).join(" · ") : "";
+    meta.textContent = a ? [STATUS[a.status] ?? a.status, a.provider === "codex" ? "Codex" : "Claude Code", a.project].filter(Boolean).join(" · ") : "";
+    drawModes(a);
     panel.classList.toggle("is-running", a?.status === "running");
     stop.disabled = a?.status !== "running";
     const key = JSON.stringify([t.items.length, t.items.at(-1)?.text.length, t.items.at(-1)?.status, a?.permissions.map((p) => p.id), a?.status]);
@@ -250,6 +284,7 @@ export function mountPaseoChat(root: HTMLElement, feature: Feature, signal: Abor
       current = { hostId, agentId, title };
       if (!same) {
         lastKey = "";
+        modeKey = "";
         list.replaceChildren(el("div", "claw-chat-note", "불러오는 중…"));
         perms.replaceChildren();
         titleEl.textContent = title;

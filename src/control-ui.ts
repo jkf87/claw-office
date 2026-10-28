@@ -6,6 +6,7 @@ import { OfficeScene, type Seat } from "./office/scene";
 import { mountDesk, type AgentChoice, type PaseoWaiting } from "./desk";
 import { mountTerminals, type CliKind, type Locator } from "./term";
 import { mountPaseoChat } from "./chat";
+import { CLAUDE_MODES, defaultMode, modeLabel, setDefaultMode } from "./modes";
 import type { FeatureOutput } from "openclaw/plugin-sdk/feature-contract";
 import "./control-ui.css";
 
@@ -140,7 +141,6 @@ function remoteAgentSeats(m: Machine, now: number): Seat[] {
 type PaseoHost = FeatureOutput<typeof contract, "paseo-agents">["hosts"][number];
 type PaseoAgent = PaseoHost["agents"][number];
 const PASEO_POLL_MS = 3_000;
-const MODE_LABEL: Record<string, string> = { default: "매번 묻기", acceptEdits: "편집 자동 허용", auto: "자동 검토", plan: "계획", bypassPermissions: "모두 허용" };
 
 /** Claude Code and Codex agents that Paseo runs on one computer: a desk each, red-lit while a permission waits on you. */
 function paseoSeats(host: PaseoHost, scanned: ReadonlyMap<string, LocalSession>, now: number): Seat[] {
@@ -161,7 +161,7 @@ function paseoSeats(host: PaseoHost, scanned: ReadonlyMap<string, LocalSession>,
       color: TOOL_COLORS[tool],
       status,
       card: `${tool === "claude" ? "Claude Code" : "Codex"} · ${base} · Paseo`,
-      screen: [`Paseo ${a.id.slice(0, 8)}`, `모드 ${MODE_LABEL[a.mode] ?? (a.mode || "기본")}`, `기록 ${ago(now - a.updatedAt)}`],
+      screen: [`Paseo ${a.id.slice(0, 8)}`, `모드 ${a.mode ? modeLabel(a.mode) : "기본"}`, `기록 ${ago(now - a.updatedAt)}`],
       brief: waiting ? `권한 요청: ${waiting.summary}` : a.title || log?.title || "",
       actions: [...(log?.actions ?? []), ...(waiting ? [`⏸ ${waiting.summary}`] : [])].slice(-10),
     };
@@ -277,7 +277,8 @@ export default defineControlUiPlugin({
           },
           openChat: (hostId, agentId, title) => chat?.open(hostId, agentId, title),
           create: async (input) => {
-            const r = await feature.invoke("paseo-create", input);
+            // Claude Code starts in the office's default mode; Codex in its own default (its modes differ).
+            const r = await feature.invoke("paseo-create", { ...input, ...(input.provider === "claude" ? { mode: defaultMode() } : {}) });
             void pollPaseo();
             return r.agentId;
           },
@@ -381,7 +382,7 @@ export default defineControlUiPlugin({
 
         const takeIntoPaseo = async (seat: Seat, imp: NonNullable<ReturnType<typeof importable>>) => {
           try {
-            const r = await feature.invoke("paseo-import", imp);
+            const r = await feature.invoke("paseo-import", { ...imp, ...(imp.provider === "claude" ? { mode: defaultMode() } : {}) });
             desk.say(`${seat.name}을(를) Paseo로 가져왔어요. 이제 여기와 Paseo 앱에서 같은 세션으로 이어져요.`);
             await pollPaseo();
             chat?.open(imp.hostId, r.agentId, seat.brief || seat.name);
@@ -415,7 +416,19 @@ export default defineControlUiPlugin({
         const topbar = document.createElement("div");
         topbar.className = "claw-office-topbar";
         toggle.replaceWith(topbar);
-        topbar.append(openMode, toggle);
+        // The mode new and imported Claude Code sessions start in (each session can switch in its conversation panel).
+        const modePick = document.createElement("select");
+        modePick.className = "claw-office-defmode";
+        modePick.setAttribute("aria-label", "새 세션 기본 권한 모드");
+        modePick.title = "오피스에서 새로 시작하거나 Paseo로 가져오는 Claude Code 세션의 권한 모드";
+        modePick.append(...CLAUDE_MODES.map((m) => Object.assign(new Option(`새 세션: ${m.label}`, m.id), { title: m.hint })));
+        modePick.value = defaultMode();
+        modePick.onchange = () => {
+          setDefaultMode(modePick.value);
+          const m = CLAUDE_MODES.find((x) => x.id === modePick.value);
+          desk.say(`새로 시작하거나 가져오는 세션은 '${m?.label}' 모드로 시작해요. ${m?.hint ?? ""}`);
+        };
+        topbar.append(modePick, openMode, toggle);
 
         const termTitle = (seat: Seat) => `${seat.name}${seat.brief ? ` · ${seat.brief.slice(0, 24)}` : ""}`;
         const inTerminal = (seat: Seat, loc: Locator) => {
