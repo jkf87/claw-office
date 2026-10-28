@@ -127,7 +127,7 @@ openclaw gateway restart
 
 ```sh
 npm run build       # dist/ 와 openclaw.plugin.json 의 controlUi 경로를 다시 만듦
-npm run typecheck   # vendor/ 쪽 기존 타입 오류 26개는 그대로 (src/ 는 0개)
+npm run typecheck   # 지금 기존 오류 32개 (vendor/ 26개, src/paseo.ts 6개)
 npm run validate
 ```
 
@@ -147,6 +147,10 @@ npm run validate
 
 브라우저 코드는 SDK의 `control-ui`, `feature-contract` 진입점만 import합니다. Paseo 클라이언트 같은 의존성은 `dist/`에 번들되므로 `devDependencies`에 둡니다. OpenClaw 2026.10 이후는 `dependencies`에 있는 패키지가 `node_modules`에 없으면 플러그인을 켜지 않습니다.
 
+## 기여하기
+
+버그 제보·제안·PR 환영합니다. 개발 환경, 지킬 것, PR 전 확인 사항은 [CONTRIBUTING.md](CONTRIBUTING.md)에 있습니다.
+
 ## 라이선스
 
-3D 사무실·직원·모델은 [Agent Office](https://github.com/AgentSystemLabs/agent-office)(MIT, © 2026 AgentSystemLabs)의 것이며, `vendor/agent-office/`에 수정 없이 들어 있습니다. 자세한 내용은 [NOTICE.md](NOTICE.md)를 보세요.
+Claw Office 코드는 [MIT 라이선스](LICENSE)입니다. 3D 사무실·직원·모델은 [Agent Office](https://github.com/AgentSystemLabs/agent-office)(MIT, © 2026 AgentSystemLabs)의 것이며, `vendor/agent-office/`에 수정 없이 들어 있습니다. 자세한 내용은 [NOTICE.md](NOTICE.md)를 보세요.

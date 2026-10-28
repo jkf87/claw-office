@@ -1,6 +1,7 @@
 {
   "name": "openclaw-plugin-claw-office",
   "version": "0.2.0",
+  "license": "MIT",
   "type": "module",
   "private": true,
   "scripts": {
@@ -13,7 +14,8 @@
     "openclaw.plugin.json",
     "README.md",
     "vendor/agent-office/LICENSE",
-    "NOTICE.md"
+    "NOTICE.md",
+    "LICENSE"
   ],
   "peerDependencies": {
     "openclaw": ">=2026.9.8"
