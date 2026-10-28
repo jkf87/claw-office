@@ -1,0 +1,7 @@
+/* The 3D office's stylesheet. index.html links it, so the loading screen is styled before any script
+   runs, and main.ts imports it first. It is the base the 2D view shares (lite.css), the HUD over the
+   office and the loading screen; each window's own look sits next to its module in ui/ and comes in
+   with it. */
+@import './styles/base.css';
+@import './styles/hud.css';
+@import './styles/loading.css';

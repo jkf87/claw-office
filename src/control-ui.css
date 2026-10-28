@@ -1,0 +1,108 @@
+.claw-office { position: relative; width: 100%; height: 100%; min-height: 560px; overflow: hidden; background: #bfe3ff; font-family: "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; }
+.claw-office-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.claw-office-hud { position: absolute; z-index: 2; top: 16px; left: 16px; padding: 14px 18px; border-radius: 16px; background: rgba(255, 250, 243, 0.86); backdrop-filter: blur(8px); box-shadow: 0 6px 24px rgba(43, 45, 66, 0.18); color: #2b2d42; pointer-events: none; max-width: calc(100% - 32px); }
+.claw-office-title { font-weight: 800; font-size: 20px; letter-spacing: -0.02em; }
+.claw-office-counts { margin-top: 4px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.claw-office-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 12px; }
+.claw-office-legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 50%; background: var(--c); vertical-align: -1px; }
+.claw-office-tip { position: absolute; z-index: 2; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 10px 16px; border-radius: 999px; background: #2b2d42; color: #fffaf3; font-size: 13px; white-space: nowrap; max-width: calc(100% - 32px); overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.claw-office-error { position: absolute; z-index: 2; top: 16px; right: 16px; padding: 10px 14px; border-radius: 12px; background: #ffe3e8; color: #9b1c31; font-size: 13px; max-width: 420px; }
+.claw-office-brief-toggle { position: absolute; z-index: 3; top: 16px; right: 16px; padding: 10px 16px; border: 0; border-radius: 999px; background: rgba(255, 250, 243, 0.92); color: #2b2d42; font: 700 14px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; box-shadow: 0 6px 24px rgba(43, 45, 66, 0.18); cursor: pointer; }
+.claw-office-brief-toggle.is-on { background: #2b2d42; color: #fffaf3; }
+.claw-office-brief { position: absolute; z-index: 2; top: 64px; right: 16px; bottom: 16px; width: min(380px, calc(100% - 32px)); overflow-y: auto; padding: 14px; border-radius: 16px; background: rgba(255, 250, 243, 0.94); backdrop-filter: blur(8px); box-shadow: 0 6px 24px rgba(43, 45, 66, 0.18); color: #2b2d42; }
+.claw-office-brief[hidden] { display: none; }
+.claw-office-brief-head { font-weight: 800; font-size: 15px; margin: 2px 4px 10px; }
+.claw-office-brief-row { padding: 10px 12px; border-radius: 12px; margin-bottom: 6px; background: #fff; border-left: 4px solid #8ecae6; }
+.claw-office-brief-row.is-working { border-left-color: #ffd166; }
+.claw-office-brief-row.is-done { border-left-color: #06d6a0; }
+.claw-office-brief-row.is-needs_input { border-left-color: #ef476f; }
+.claw-office-brief-row.is-offline { border-left-color: #6c757d; opacity: 0.7; }
+.claw-office-brief-row.is-link { cursor: pointer; }
+.claw-office-brief-row.is-link:hover { background: #f2f7ff; }
+.claw-office-brief-name { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; }
+.claw-office-brief-name i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.claw-office-brief-name span { margin-left: auto; font-weight: 500; font-size: 12px; color: #6c6f85; white-space: nowrap; }
+.claw-office-brief-what { margin-top: 3px; font-size: 13px; }
+.claw-office-brief-act { margin-top: 3px; font: 12px ui-monospace, Menlo, monospace; color: #5c5f77; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.claw-office-floors { position: absolute; z-index: 3; top: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: rgba(255, 250, 243, 0.92); box-shadow: 0 6px 24px rgba(43, 45, 66, 0.18); max-width: calc(100% - 32px); overflow-x: auto; }
+.claw-office-floor { display: flex; flex-direction: column; align-items: center; min-width: 92px; padding: 6px 14px; border: 0; border-radius: 999px; background: transparent; color: #2b2d42; font: inherit; cursor: pointer; line-height: 1.2; }
+.claw-office-floor b { font-size: 14px; font-weight: 800; }
+.claw-office-floor span { font-size: 11px; color: #6c6f85; white-space: nowrap; }
+.claw-office-floor:hover { background: rgba(43, 45, 66, 0.06); }
+.claw-office-floor.is-on { background: #2b2d42; color: #fffaf3; }
+.claw-office-floor.is-on span { color: #d8dbe8; }
+.claw-office-floor.is-off span { color: #b0485a; }
+.claw-office-deskbar { position: absolute; z-index: 4; right: 16px; bottom: 16px; display: flex; gap: 8px; }
+.claw-office-assign-open, .claw-office-inbox-toggle { padding: 10px 16px; border: 0; border-radius: 999px; background: rgba(255, 250, 243, 0.94); color: #2b2d42; font: 700 14px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; box-shadow: 0 6px 24px rgba(43, 45, 66, 0.18); cursor: pointer; }
+.claw-office-assign-open { background: #2b2d42; color: #fffaf3; }
+.claw-office-inbox-toggle.is-hot { background: #ef476f; color: #fff; }
+.claw-office-inbox-toggle.is-on { outline: 3px solid #2b2d42; }
+.claw-office-inbox { position: absolute; z-index: 4; right: 16px; bottom: 68px; width: min(400px, calc(100% - 32px)); max-height: calc(100% - 140px); overflow-y: auto; padding: 14px; border-radius: 16px; background: rgba(255, 250, 243, 0.97); box-shadow: 0 10px 32px rgba(43, 45, 66, 0.25); color: #2b2d42; }
+.claw-office-inbox[hidden] { display: none; }
+.claw-office-inbox-head { font-weight: 800; font-size: 16px; margin: 2px 4px 10px; }
+.claw-office-inbox-empty { margin: 4px; color: #6c6f85; font-size: 13px; }
+.claw-office-inbox-sub { margin: 14px 4px 6px; font-size: 12px; font-weight: 700; color: #6c6f85; }
+.claw-office-inbox-running { padding: 8px 10px; border-radius: 10px; font-size: 13px; background: #fff; margin-bottom: 4px; border-left: 4px solid #ffd166; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.claw-office-inbox-running.is-link { cursor: pointer; }
+.claw-office-card { padding: 12px; border-radius: 12px; background: #fff; margin-bottom: 8px; border-left: 4px solid #8ecae6; }
+.claw-office-card.is-question { border-left-color: #ef476f; }
+.claw-office-card.is-done { border-left-color: #06d6a0; }
+.claw-office-card-kind { font-size: 12px; font-weight: 700; color: #6c6f85; }
+.claw-office-card-title { margin-top: 6px; font-size: 14px; font-weight: 700; }
+.claw-office-card-note { margin-top: 4px; font-size: 12px; color: #5c5f77; }
+.claw-office-card-result { margin-top: 6px; padding: 8px; border-radius: 8px; background: #f4f6fb; font-size: 13px; max-height: 6.5em; overflow: hidden; }
+.claw-office-card-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.claw-office-chip { padding: 6px 12px; border: 1px solid #c9ccd6; border-radius: 999px; background: #fff; font: 600 13px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; cursor: pointer; }
+.claw-office-chip.is-on { background: #2b2d42; color: #fffaf3; border-color: #2b2d42; }
+.claw-office-card-other { flex: 1 1 140px; padding: 6px 10px; border: 1px solid #c9ccd6; border-radius: 8px; font: 13px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; }
+.claw-office-card-acts { display: flex; gap: 6px; margin-top: 10px; }
+.claw-office-btn { padding: 8px 14px; border: 1px solid #c9ccd6; border-radius: 10px; background: #fff; color: #2b2d42; font: 700 13px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; cursor: pointer; }
+.claw-office-btn.is-primary { background: #2b2d42; border-color: #2b2d42; color: #fffaf3; }
+.claw-office-btn:disabled { opacity: 0.5; cursor: wait; }
+.claw-office-veil { position: absolute; z-index: 6; inset: 0; display: grid; place-items: center; background: rgba(43, 45, 66, 0.35); }
+.claw-office-veil[hidden] { display: none; }
+.claw-office-assign { width: min(520px, calc(100% - 32px)); padding: 20px; border-radius: 18px; background: #fffaf3; color: #2b2d42; box-shadow: 0 16px 48px rgba(43, 45, 66, 0.3); display: grid; gap: 12px; }
+.claw-office-assign h2 { margin: 0; font-size: 20px; font-weight: 800; }
+.claw-office-assign-label { display: grid; gap: 6px; font-size: 13px; font-weight: 700; }
+.claw-office-assign-label select, .claw-office-assign-label textarea, .claw-office-assign-label input { padding: 10px 12px; border: 1px solid #c9ccd6; border-radius: 10px; background: #fff; color: #2b2d42; font: 500 14px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; resize: vertical; }
+.claw-office-assign-note { margin: -6px 2px 0; font-size: 12px; color: #6c6f85; }
+.claw-office-assign-row { display: flex; justify-content: flex-end; gap: 8px; }
+.claw-office-toast { position: absolute; z-index: 7; left: 50%; top: 84px; transform: translateX(-50%); padding: 10px 16px; border-radius: 12px; background: #2b2d42; color: #fffaf3; font-size: 13px; box-shadow: 0 6px 24px rgba(43, 45, 66, 0.25); }
+.claw-office-toast.is-bad { background: #9b1c31; }
+.claw-office-toast[hidden] { display: none; }
+.claw-office-legend.is-desks span::before { border-radius: 2px; }
+/* The terminal panel takes the right of the page; the 3D office and its buttons make room for it. */
+.claw-office { --claw-term-w: 0px; }
+.claw-office-canvas { right: var(--claw-term-w); width: auto; }
+.claw-office-deskbar, .claw-office-brief-toggle, .claw-office-brief, .claw-office-inbox { right: calc(var(--claw-term-w) + 16px); }
+.claw-office-tip { left: calc((100% - var(--claw-term-w)) / 2); }
+.claw-term { position: absolute; z-index: 5; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; background: #1e1e2e; color: #cdd6f4; box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18); }
+.claw-term[hidden] { display: none; }
+.claw-term-divider { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 1; }
+.claw-term-divider:focus-visible { outline: 2px solid #89b4fa; }
+.claw-term-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: #181825; border-bottom: 1px solid #313244; }
+.claw-term-tabs { display: flex; gap: 4px; flex: 1; overflow-x: auto; min-width: 0; }
+.claw-term-tab { display: flex; align-items: center; border-radius: 8px; background: #313244; white-space: nowrap; }
+.claw-term-tab.is-on { background: #45475a; box-shadow: inset 0 -2px 0 #89b4fa; }
+.claw-term-tab.is-ended { opacity: 0.55; }
+.claw-term-tab-name, .claw-term-tab-x { border: 0; background: transparent; color: inherit; font: 600 12px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; padding: 6px 8px; cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.claw-term-tab-x { padding: 6px 7px; opacity: 0.7; }
+.claw-term-tab-x:hover { opacity: 1; }
+.claw-term-btn { flex: none; padding: 6px 10px; border: 1px solid #45475a; border-radius: 8px; background: #313244; color: #cdd6f4; font: 700 12px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; cursor: pointer; }
+.claw-term-btn.is-primary { background: #89b4fa; border-color: #89b4fa; color: #1e1e2e; }
+.claw-term-menu { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: #181825; border-bottom: 1px solid #313244; }
+.claw-term-menu[hidden] { display: none; }
+.claw-term-menu select, .claw-term-menu input { padding: 6px 8px; border: 1px solid #45475a; border-radius: 8px; background: #1e1e2e; color: #cdd6f4; font: 13px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; }
+.claw-term-menu input { flex: 1 1 200px; }
+.claw-term-menu [hidden] { display: none; }
+.claw-term-body { position: relative; flex: 1; min-height: 0; }
+.claw-term-pane { position: absolute; inset: 6px 4px 4px 8px; }
+.claw-term-pane[hidden] { display: none; }
+.claw-term-open { position: absolute; z-index: 4; left: 16px; bottom: 16px; padding: 10px 16px; border: 0; border-radius: 999px; background: #1e1e2e; color: #cdd6f4; font: 700 14px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; box-shadow: 0 6px 24px rgba(43, 45, 66, 0.25); cursor: pointer; }
+.claw-term-open[hidden] { display: none; }
+.claw-term-input { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); background: #181825; border-top: 1px solid #313244; }
+.claw-term-input[hidden] { display: none; }
+.claw-term-input input { flex: 1 1 160px; min-width: 0; padding: 10px 12px; border: 1px solid #45475a; border-radius: 10px; background: #1e1e2e; color: #cdd6f4; font: 16px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; }
+.claw-term-keys { display: flex; gap: 6px; flex-basis: 100%; overflow-x: auto; }
+.claw-term-keys .claw-term-btn { min-width: 44px; min-height: 36px; }
+.claw-office-keys { margin-top: 6px; font-size: 11px; color: #6c6f85; }
