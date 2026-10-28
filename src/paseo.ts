@@ -272,6 +272,27 @@ export async function paseoSetMode(hostId: string, agentId: string, modeId: stri
   forget();
 }
 
+/** Puts every Claude Code agent on every connected daemon into one mode; agents already in it, or without it, are left alone. */
+export async function paseoSetModeAll(modeId: string): Promise<{ changed: number; failed: number }> {
+  let changed = 0;
+  let failed = 0;
+  for (const def of hostsFromConfig()) {
+    let client: DaemonClient;
+    try { client = await connected(def); } catch { continue; }
+    const r = await client.fetchAgents({ page: { limit: 200 } }).catch(() => null);
+    const agents = (r?.entries ?? []).map((e) => e.agent as unknown as RawAgent).filter((a) => !a.archivedAt && a.status !== "closed" && a.provider === "claude");
+    for (const a of agents) {
+      if (a.currentModeId === modeId || !(a.availableModes ?? []).some((m) => m.id === modeId)) continue;
+      try {
+        await client.setAgentMode(a.id, modeId);
+        changed++;
+      } catch { failed++; }
+    }
+  }
+  forget();
+  return { changed, failed };
+}
+
 export async function paseoStop(hostId: string, agentId: string): Promise<void> {
   const client = await connected(hostDef(hostId));
   await client.cancelAgent(agentId);

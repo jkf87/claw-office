@@ -6791,6 +6791,12 @@ var contract = defineFeatureContract({
       }, { additionalProperties: false }),
       output: Ok
     },
+    "paseo-mode-all": {
+      kind: "action",
+      description: "Put every Claude Code agent Paseo runs (on every connected computer) into one permission mode.",
+      input: typebox_exports.Object({ mode: typebox_exports.String({ minLength: 1, maxLength: 80 }) }, { additionalProperties: false }),
+      output: typebox_exports.Object({ changed: typebox_exports.Integer(), failed: typebox_exports.Integer() })
+    },
     "paseo-stop": {
       kind: "action",
       description: "Interrupt a Paseo agent's current turn.",
@@ -142278,6 +142284,31 @@ async function paseoSetMode(hostId, agentId, modeId) {
   await client.setAgentMode(agentId, modeId);
   forget();
 }
+async function paseoSetModeAll(modeId) {
+  let changed = 0;
+  let failed = 0;
+  for (const def of hostsFromConfig()) {
+    let client;
+    try {
+      client = await connected(def);
+    } catch {
+      continue;
+    }
+    const r = await client.fetchAgents({ page: { limit: 200 } }).catch(() => null);
+    const agents = (r?.entries ?? []).map((e) => e.agent).filter((a) => !a.archivedAt && a.status !== "closed" && a.provider === "claude");
+    for (const a of agents) {
+      if (a.currentModeId === modeId || !(a.availableModes ?? []).some((m) => m.id === modeId)) continue;
+      try {
+        await client.setAgentMode(a.id, modeId);
+        changed++;
+      } catch {
+        failed++;
+      }
+    }
+  }
+  forget();
+  return { changed, failed };
+}
 async function paseoStop(hostId, agentId) {
   const client = await connected(hostDef(hostId));
   await client.cancelAgent(agentId);
@@ -142346,6 +142377,7 @@ var index_default = defineFeaturePlugin({
       "paseo-send": async ({ hostId, agentId, text, interrupt }) => (await paseoSend(hostId, agentId, text, interrupt ?? false), { ok: true }),
       "paseo-permit": async ({ hostId, agentId, requestId, allow, actionId, acceptEdits, message: message2 }) => (await paseoPermit(hostId, agentId, requestId, { allow, actionId, acceptEdits, message: message2 }), { ok: true }),
       "paseo-mode": async ({ hostId, agentId, mode }) => (await paseoSetMode(hostId, agentId, mode), { ok: true }),
+      "paseo-mode-all": ({ mode }) => paseoSetModeAll(mode),
       "paseo-stop": async ({ hostId, agentId }) => (await paseoStop(hostId, agentId), { ok: true }),
       "paseo-create": async (input2) => ({ agentId: await paseoCreate(input2) }),
       "paseo-import": async (input2) => ({ agentId: await paseoImport(input2) })

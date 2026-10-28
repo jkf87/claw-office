@@ -159,3 +159,6 @@
 .claw-chat-mode { flex: none; max-width: 160px; padding: 6px 8px; border: 1px solid #c9ccd6; border-radius: 8px; background: #fff; color: #2b2d42; font: 600 12px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; }
 .claw-chat-mode[hidden] { display: none; }
 @media (max-width: 720px) { .claw-office-defmode { max-width: 130px; } .claw-chat-mode { max-width: 110px; } }
+.claw-office-applyall { padding: 9px 12px; border: 0; border-radius: 999px; background: rgba(255, 250, 243, 0.94); color: #2b2d42; font: 700 12px "Pretendard", "Apple SD Gothic Neo", system-ui, sans-serif; box-shadow: 0 6px 24px rgba(43, 45, 66, 0.18); cursor: pointer; white-space: nowrap; }
+.claw-office-applyall:disabled { opacity: 0.6; cursor: wait; }
+@media (max-width: 720px) { .claw-office-topbar { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 32px); } }

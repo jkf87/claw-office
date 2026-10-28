@@ -152,6 +152,12 @@ export const contract = defineFeatureContract({
       }, { additionalProperties: false }),
       output: Ok,
     },
+    "paseo-mode-all": {
+      kind: "action",
+      description: "Put every Claude Code agent Paseo runs (on every connected computer) into one permission mode.",
+      input: Type.Object({ mode: Type.String({ minLength: 1, maxLength: 80 }) }, { additionalProperties: false }),
+      output: Type.Object({ changed: Type.Integer(), failed: Type.Integer() }),
+    },
     "paseo-stop": {
       kind: "action",
       description: "Interrupt a Paseo agent's current turn.",

@@ -428,7 +428,37 @@ export default defineControlUiPlugin({
           const m = CLAUDE_MODES.find((x) => x.id === modePick.value);
           desk.say(`새로 시작하거나 가져오는 세션은 '${m?.label}' 모드로 시작해요. ${m?.hint ?? ""}`);
         };
-        topbar.append(modePick, openMode, toggle);
+        // The same mode for every Claude Code session Paseo already runs (all computers). "모두 허용" asks twice.
+        const applyAll = document.createElement("button");
+        applyAll.type = "button";
+        applyAll.className = "claw-office-applyall";
+        applyAll.textContent = "지금 세션에도 적용";
+        applyAll.title = "Paseo가 맡은 Claude Code 세션 전부를 왼쪽 모드로 바꿔요 (다음 도구 호출부터)";
+        let armed = 0;
+        applyAll.onclick = async () => {
+          const mode = modePick.value;
+          const label = CLAUDE_MODES.find((m) => m.id === mode)?.label ?? mode;
+          if (mode === "bypassPermissions" && Date.now() - armed > 5000) {
+            armed = Date.now();
+            applyAll.textContent = "정말 모두 허용? 한 번 더";
+            setTimeout(() => { if (Date.now() - armed >= 5000) applyAll.textContent = "지금 세션에도 적용"; }, 5100);
+            return;
+          }
+          armed = 0;
+          applyAll.disabled = true;
+          applyAll.textContent = "바꾸는 중…";
+          try {
+            const r = await feature.invoke("paseo-mode-all", { mode });
+            desk.say(r.changed ? `세션 ${r.changed}개를 '${label}' 모드로 바꿨어요.${r.failed ? ` (${r.failed}개는 실패)` : ""}` : `바꿀 세션이 없어요. 모두 이미 '${label}'이에요.`, r.failed > 0);
+            void pollPaseo();
+          } catch (err) {
+            desk.say(`바꾸지 못했어요: ${String((err as Error)?.message ?? err)}`, true);
+          } finally {
+            applyAll.disabled = false;
+            applyAll.textContent = "지금 세션에도 적용";
+          }
+        };
+        topbar.append(modePick, applyAll, openMode, toggle);
 
         const termTitle = (seat: Seat) => `${seat.name}${seat.brief ? ` · ${seat.brief.slice(0, 24)}` : ""}`;
         const inTerminal = (seat: Seat, loc: Locator) => {
