@@ -1,3 +1,5 @@
 node_modules
 out
 .update.log
+.DS_Store
+*.tgz

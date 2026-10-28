@@ -1,0 +1,6 @@
+{
+  "hosts": [
+    { "id": "m5", "label": "M5", "url": "ws://127.0.0.1:6767/ws" },
+    { "id": "m2max", "label": "M2 Max", "url": "ws://100.64.0.2:6767/ws", "password": "change-me" }
+  ]
+}

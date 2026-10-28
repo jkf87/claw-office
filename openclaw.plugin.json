@@ -2,7 +2,7 @@
   "id": "claw-office",
   "name": "Claw Office",
   "description": "A 3D office of this computer's and the tailnet's agents in the Control UI.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
