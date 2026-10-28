@@ -4,6 +4,8 @@ OpenClaw Control UI 안에서 돌아가는 **3D 사무실**입니다. 내 컴퓨
 
 Claude Code·Codex 세션은 [Paseo](https://paseo.sh)를 통해 다룹니다. Paseo가 세션 프로세스를 직접 실행하기 때문에, 오피스에서 보낸 메시지가 **지금 돌고 있는 그 세션**에 들어갑니다. `claude --resume`으로 두 번째 프로세스를 띄우지 않으므로 대화가 갈라지지 않습니다. 권한 요청도 데이터로 받아서 버튼으로 답합니다.
 
+![Claw Office 전체 모습 — 컴퓨터별 구역, 상태 보드, OpenClaw 에이전트 라운지](docs/images/office-overview.jpg)
+
 ## 할 수 있는 것
 
 | 기능 | 어디서 |
@@ -26,6 +28,8 @@ Claude Code·Codex 세션은 [Paseo](https://paseo.sh)를 통해 다룹니다. P
 
 필요한 것: OpenClaw 2026.9.8 이상, Node 24.16 이상, 그리고 각 컴퓨터에 로그인된 `claude`(와 `codex`).
 
+![설치 순서 — git clone, npm install, ./update-plugin.sh, 커스텀 플러그인 UI 켜기](docs/images/install.jpg)
+
 ```sh
 git clone https://github.com/jkf87/claw-office.git ~/claw-office
 cd ~/claw-office
@@ -33,7 +37,7 @@ npm install            # 빌드할 때만 필요 (dist/는 커밋돼 있음)
 ./update-plugin.sh     # Paseo 데몬 켜기 → 플러그인 설치 → 게이트웨이 재시작
 ```
 
-그다음 Control UI에서 **Settings > Labs > Custom plugin UI**를 켜고(`gateway.controlUi.experimental.customPlugins: true`), 사이드바의 **Claw Office**를 엽니다.
+그다음 Control UI에서 **Settings > Labs > Custom plugin UI**를 켜고(터미널이면 `openclaw config set gateway.controlUi.experimental.customPlugins true`), 사이드바의 **Claw Office**를 엽니다.
 
 `update-plugin.sh`는 실행 결과를 `.update.log`에 남깁니다. 손으로 할 때는 이렇게 합니다.
 
@@ -65,6 +69,8 @@ openclaw gateway restart
 ## 사용법
 
 ### 둘러보기
+
+![화면 안내 — 위쪽 버튼, 상태 보드, 직원, 일 맡기기·받은함·터미널](docs/images/office-guide.jpg)
 
 - 사이드바에서 **Claw Office**를 열면 컴퓨터마다 구역이 나뉜 사무실이 뜹니다. 직원 머리 위 색이 상태입니다: 노랑 일하는 중, 초록 방금 끝남, 하늘 대기, 회색 꺼짐. 책상 색은 도구입니다(OpenClaw·Claude Code·Codex·GJC·AGY).
 - 이동은 WASD, 회전은 Q/E, Shift로 빠르게, 마우스 휠로 확대합니다.
