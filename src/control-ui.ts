@@ -3,8 +3,10 @@ import { createFeatureClient } from "openclaw/plugin-sdk/feature-contract";
 import type { WorkerStatus } from "../vendor/agent-office/shared/protocol";
 import { contract } from "./contract.js";
 import { OfficeScene, type Seat } from "./office/scene";
-import { mountDesk, type AgentChoice } from "./desk";
+import { mountDesk, type AgentChoice, type PaseoWaiting } from "./desk";
 import { mountTerminals, type CliKind, type Locator } from "./term";
+import { mountPaseoChat } from "./chat";
+import type { FeatureOutput } from "openclaw/plugin-sdk/feature-contract";
 import "./control-ui.css";
 
 // OpenClaw agents get the first desks, each in a color of its own; then this machine's Claude Code
@@ -135,6 +137,37 @@ function remoteAgentSeats(m: Machine, now: number): Seat[] {
   });
 }
 
+type PaseoHost = FeatureOutput<typeof contract, "paseo-agents">["hosts"][number];
+type PaseoAgent = PaseoHost["agents"][number];
+const PASEO_POLL_MS = 3_000;
+const MODE_LABEL: Record<string, string> = { default: "매번 묻기", acceptEdits: "편집 자동 허용", auto: "자동 검토", plan: "계획", bypassPermissions: "모두 허용" };
+
+/** Claude Code and Codex agents that Paseo runs on one computer: a desk each, red-lit while a permission waits on you. */
+function paseoSeats(host: PaseoHost, scanned: ReadonlyMap<string, LocalSession>, now: number): Seat[] {
+  const perProject = new Map<string, number>();
+  return host.agents.filter((a) => a.status === "running" || a.permissions.length || now - a.updatedAt < LEAVE_AFTER_MS).map((a) => {
+    const tool = a.provider === "codex" ? "codex" : "claude";
+    const base = a.project || tool;
+    const n = (perProject.get(`${tool}:${base}`) ?? 0) + 1;
+    perProject.set(`${tool}:${base}`, n);
+    const status: WorkerStatus = a.permissions.length ? "needs_input" : a.status === "running" || a.status === "initializing" ? "working" : now - a.updatedAt < DONE_MS ? "done" : "idle";
+    const log = a.sessionId ? scanned.get(a.sessionId) : undefined;
+    const waiting = a.permissions[0];
+    return {
+      key: `paseo:${host.id}:${a.id}`,
+      machine: host.id,
+      tool,
+      name: n > 1 ? `${base} ${n}` : base,
+      color: TOOL_COLORS[tool],
+      status,
+      card: `${tool === "claude" ? "Claude Code" : "Codex"} · ${base} · Paseo`,
+      screen: [`Paseo ${a.id.slice(0, 8)}`, `모드 ${MODE_LABEL[a.mode] ?? (a.mode || "기본")}`, `기록 ${ago(now - a.updatedAt)}`],
+      brief: waiting ? `권한 요청: ${waiting.summary}` : a.title || log?.title || "",
+      actions: [...(log?.actions ?? []), ...(waiting ? [`⏸ ${waiting.summary}`] : [])].slice(-10),
+    };
+  });
+}
+
 function openclawSeats(agents: readonly AgentRow[], sessions: readonly ControlUiSession[], now: number): OpenClawSeat[] {
   return agents
     .filter((a) => a.kind !== "system")
@@ -206,7 +239,11 @@ export default defineControlUiPlugin({
             act.textContent = s.actions.at(-1) ?? s.screen.at(-1) ?? "";
             row.append(top, what, act);
             const href = sessionHref(s);
-            if (opens.has(s.key) || href) {
+            const pa = paseoOf(s);
+            if (pa) {
+              row.classList.add("is-link");
+              row.onclick = () => chat?.open(pa.hostId, pa.agentId, s.brief || s.name);
+            } else if (opens.has(s.key) || href) {
               row.classList.add("is-link");
               row.onclick = () => (href ? location.assign(href) : context.host.sessions.open(opens.get(s.key)!));
             }
@@ -231,10 +268,25 @@ export default defineControlUiPlugin({
         const office = new OfficeScene(root);
         // An OpenClaw agent's TUI opens beside the office from the assign window; terms is set just below.
         let terms: ReturnType<typeof mountTerminals> | null = null;
+        // Paseo agents' conversations open beside the office; chat is set just below (the desk needs it first).
+        let chat: ReturnType<typeof mountPaseoChat> | null = null;
+        let paseoHosts: PaseoHost[] = [];
         const desk = mountDesk(root, context.host, context.signal, (agentId) => {
           const key = opens.get(`openclaw:${agentId}`)?.sessionKey;
           void terms?.openNew("openclaw", { agentId, sessionKey: key, title: `OpenClaw · ${agents.find((a) => a.id === agentId)?.identity?.name ?? agentId}` });
+        }, {
+          permit: async (w, a) => {
+            await feature.invoke("paseo-permit", { hostId: w.hostId, agentId: w.agentId, requestId: w.perm.id, allow: a.allow, ...(a.actionId ? { actionId: a.actionId } : {}), ...(a.acceptEdits ? { acceptEdits: true } : {}) });
+            void pollPaseo();
+          },
+          openChat: (hostId, agentId, title) => chat?.open(hostId, agentId, title),
+          create: async (input) => {
+            const r = await feature.invoke("paseo-create", input);
+            void pollPaseo();
+            return r.agentId;
+          },
         });
+        chat = mountPaseoChat(root, feature, context.signal, desk.say);
         // Claude Code and Codex ask once per folder whether to trust it; the office answers before opening a terminal there.
         terms = mountTerminals(root, context.host, context.signal, desk.say, async (kind, cwd) => {
           if (kind !== "claude" && kind !== "codex") return;
@@ -249,14 +301,42 @@ export default defineControlUiPlugin({
         let all: Seat[] = [];
         const opens = new Map<string, { sessionKey: string; agentId: string }>();
 
-        const seatsOf = (id: string, now: number): Seat[] => {
-          const fromCatalog = CATALOG_KINDS.flatMap((k) => catalogSeats(k, catalogs[k] ?? [], now)).filter((x) => x.machine === id);
-          if (id === HOME.id) return [...openclawSeats(agents, sessions, now).map((s) => (desk.asking.has(s.key.slice("openclaw:".length)) ? { ...s, status: "needs_input" as const } : s)), ...localSeats(HOME.id, locals, now), ...fromCatalog];
-          const m = remotes.find((r) => r.id === id);
-          return m ? [...remoteAgentSeats(m, now), ...localSeats(m.id, m.sessions, now), ...fromCatalog] : fromCatalog;
+        // A session Paseo runs sits at Paseo's desk; its log (read from disk) only lends that desk its latest tool calls.
+        const paseoSeatsOf = (id: string, logs: readonly LocalSession[], now: number): { seats: Seat[]; logs: LocalSession[] } => {
+          const host = paseoHosts.find((h) => h.id === id && h.connected);
+          if (!host) return { seats: [], logs: [...logs] };
+          const scanned = new Map(logs.map((l) => [l.id, l]));
+          const owned = new Set(host.agents.map((a) => a.sessionId).filter(Boolean));
+          return { seats: paseoSeats(host, scanned, now), logs: logs.filter((l) => !owned.has(l.id)) };
         };
 
-        const machineLabel = (id: string) => (id === HOME.id ? HOME.label : remotes.find((r) => r.id === id)?.label ?? id);
+        const seatsOf = (id: string, now: number): Seat[] => {
+          const fromCatalog = CATALOG_KINDS.flatMap((k) => catalogSeats(k, catalogs[k] ?? [], now)).filter((x) => x.machine === id);
+          if (id === HOME.id) {
+            const p = paseoSeatsOf(id, locals, now);
+            return [...openclawSeats(agents, sessions, now).map((s) => (desk.asking.has(s.key.slice("openclaw:".length)) ? { ...s, status: "needs_input" as const } : s)), ...p.seats, ...localSeats(HOME.id, p.logs, now), ...fromCatalog];
+          }
+          const m = remotes.find((r) => r.id === id);
+          const p = paseoSeatsOf(id, m?.sessions ?? [], now);
+          return m ? [...remoteAgentSeats(m, now), ...p.seats, ...localSeats(m.id, p.logs, now), ...fromCatalog] : [...p.seats, ...fromCatalog];
+        };
+        /** Every computer with a floor: this one, the ones read over SSH, and any other with a Paseo daemon. */
+        const areaIds = () => [...new Set([HOME.id, ...remotes.map((r) => r.id), ...paseoHosts.map((h) => h.id)])];
+
+        const machineLabel = (id: string) => (id === HOME.id ? HOME.label : remotes.find((r) => r.id === id)?.label ?? paseoHosts.find((h) => h.id === id)?.label ?? id);
+        const paseoOf = (seat: Seat): { hostId: string; agentId: string } | null => {
+          if (!seat.key.startsWith("paseo:")) return null;
+          const [, hostId, agentId] = seat.key.split(":");
+          return { hostId, agentId };
+        };
+        /** A session from the logs that a connected Paseo on its computer could take over. */
+        const importable = (seat: Seat): { hostId: string; provider: "claude" | "codex"; sessionId: string; cwd?: string } | null => {
+          if (seat.tool !== "claude" && seat.tool !== "codex") return null;
+          if (seat.key.startsWith("paseo:") || !paseoHosts.some((h) => h.id === seat.machine && h.connected)) return null;
+          const sessionId = seat.key.split(":").slice(2).join(":");
+          const logs = seat.machine === HOME.id ? locals : remotes.find((r) => r.id === seat.machine)?.sessions ?? [];
+          return { hostId: seat.machine, provider: seat.tool, sessionId, cwd: logs.find((l) => l.id === sessionId)?.cwd || undefined };
+        };
         /** This computer's Claude Code and Codex sessions open in the Gateway's own session catalog (Chat, read and continue). */
         const sessionHref = (seat: Seat): string | null => {
           if (seat.machine !== HOME.id || (seat.tool !== "claude" && seat.tool !== "codex")) return null;
@@ -281,30 +361,83 @@ export default defineControlUiPlugin({
           desk.update(sessions, choices);
           terms?.setAgents(choices.map((c) => ({ id: c.id, name: c.name, sessionKey: opens.get(`openclaw:${c.id}`)?.sessionKey })));
           const latest = [...locals].sort((x, y) => y.updatedAt - x.updatedAt).find((x) => x.cwd);
-          if (latest?.cwd) terms?.setDefaultCwd(latest.cwd);
+          if (latest?.cwd) {
+            terms?.setDefaultCwd(latest.cwd);
+            desk.setDefaultCwd(latest.cwd);
+          }
+          // Paseo: what waits on you goes to the inbox; each connected computer can take new Claude Code / Codex work.
+          const waiting: PaseoWaiting[] = paseoHosts.flatMap((h) => h.agents.flatMap((a) => a.permissions.map((perm) => ({ hostId: h.id, agentId: a.id, name: a.title || a.project, where: `${h.label} · ${a.provider === "codex" ? "Codex" : "Claude Code"}`, perm }))));
+          const targets: AgentChoice[] = paseoHosts.filter((h) => h.connected).flatMap((h) => (["claude", "codex"] as const).map((provider) => ({ id: `paseo:${h.id}:${provider}`, name: `${provider === "claude" ? "Claude Code" : "Codex"} · ${h.label} (Paseo)`, model: "", working: false, paseo: { hostId: h.id, provider } })));
+          desk.setPaseo(waiting, targets);
           opens.clear();
           for (const s of claw) if (s.open) opens.set(s.key, s.open);
-          all = [HOME.id, ...remotes.map((r) => r.id)].flatMap((id) => seatsOf(id, now));
+          all = areaIds().flatMap((id) => seatsOf(id, now));
           // More people than an area has desks: the ones at work (or waiting on you) get the seats, then the freshest.
           office.setSeats([...all].sort((x, y) => (ORDER_FOR_SEATS[x.status] ?? 9) - (ORDER_FOR_SEATS[y.status] ?? 9)));
           if (!panel.hidden) briefing();
           // One line per computer: who's there, who's working, and whether it could be read at all.
-          const lines = [HOME.id, ...remotes.map((r) => r.id)].map((id) => {
+          const lines = areaIds().map((id) => {
             const m = remotes.find((r) => r.id === id);
             const mine = all.filter((x) => x.machine === id);
             const working = mine.filter((x) => x.status === "working").length;
             const cap = office.capacity(id);
             const state = m && !m.reachable ? (m.fetchedAt ? " (연결 안 됨)" : " (읽는 중)") : "";
             const body = mine.length ? `${mine.length}명${working ? ` · 일하는 중 ${working}` : ""}${cap && mine.length > cap ? ` · 자리 ${cap}` : ""}` : "에이전트 없음";
-            return `${machineLabel(id)} ${body}${state}`;
+            const ph = paseoHosts.find((h) => h.id === id);
+            const paseoState = ph ? (ph.connected ? " · Paseo ✓" : " · Paseo 연결 안 됨") : "";
+            return `${machineLabel(id)} ${body}${state}${paseoState}`;
           });
           (hud.querySelector(".claw-office-counts") as HTMLElement).textContent = lines.join("  ·  ");
+        };
+
+        // A two-way question over the office (take a session into Paseo, or keep the old terminal way).
+        const choose = (heading: string, text: string, options: { label: string; primary?: boolean; run: () => void }[]) => {
+          const veil = document.createElement("div");
+          veil.className = "claw-office-veil";
+          const box = document.createElement("div");
+          box.className = "claw-office-assign";
+          box.setAttribute("role", "dialog");
+          box.setAttribute("aria-modal", "true");
+          const h = document.createElement("h2");
+          h.textContent = heading;
+          const p = document.createElement("p");
+          p.className = "claw-office-assign-note";
+          p.style.margin = "0";
+          p.textContent = text;
+          const row = document.createElement("div");
+          row.className = "claw-office-assign-row";
+          const done = () => veil.remove();
+          for (const o of [...options, { label: "닫기", run: () => undefined }]) {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = `claw-office-btn${"primary" in o && o.primary ? " is-primary" : ""}`;
+            b.textContent = o.label;
+            b.onclick = () => { done(); o.run(); };
+            row.append(b);
+          }
+          box.append(h, p, row);
+          veil.append(box);
+          veil.onclick = (e) => { if (e.target === veil) done(); };
+          box.onkeydown = (e) => { if (e.key === "Escape") done(); };
+          root.append(veil);
+          (row.querySelector(".is-primary") as HTMLButtonElement | null)?.focus();
+        };
+
+        const takeIntoPaseo = async (seat: Seat, imp: NonNullable<ReturnType<typeof importable>>) => {
+          try {
+            const r = await feature.invoke("paseo-import", imp);
+            desk.say(`${seat.name}을(를) Paseo로 가져왔어요. 이제 여기와 Paseo 앱에서 같은 세션으로 이어져요.`);
+            await pollPaseo();
+            chat?.open(imp.hostId, r.agentId, seat.brief || seat.name);
+          } catch (err) {
+            desk.say(`가져오지 못했어요: ${String((err as Error)?.message ?? err)}`, true);
+          }
         };
 
         office.onHover = (seat) => {
           tip.hidden = !seat;
           if (!seat) return;
-          const how = seat.key.startsWith("openclaw:") ? "  (눌러서 일 맡기기)" : locatorOf(seat) ? "  (눌러서 옆 터미널에서 이어 가기)" : seat.machine !== HOME.id ? `  (${machineLabel(seat.machine)} 노드가 연결되면 열 수 있어요)` : "";
+          const how = seat.key.startsWith("openclaw:") ? "  (눌러서 일 맡기기)" : paseoOf(seat) ? (seat.status === "needs_input" ? "  (눌러서 권한 답하기)" : "  (눌러서 대화 이어 가기)") : importable(seat) ? "  (눌러서 Paseo로 가져오기)" : locatorOf(seat) ? "  (눌러서 옆 터미널에서 이어 가기)" : seat.machine !== HOME.id ? `  (${machineLabel(seat.machine)} 노드가 연결되면 열 수 있어요)` : "";
           tip.textContent = `${machineLabel(seat.machine)} · ${seat.name} — ${seat.brief || seat.card}${seat.actions.length ? ` · ${seat.actions.at(-1)}` : ""}${how}`;
         };
         office.onPick = (seat) => {
@@ -314,8 +447,28 @@ export default defineControlUiPlugin({
           // Claude Code, Codex, AGY and GJC sessions continue in a terminal beside the office, straight away; one
           // still at work elsewhere gets a passing notice instead of a question.
           const loc = locatorOf(seat);
+          const pa = paseoOf(seat);
+          const imp = importable(seat);
           if (seat.key.startsWith("openclaw:")) desk.assign(seat.key.slice("openclaw:".length));
-          else if (loc) {
+          // Paseo runs it: its conversation (and any permission waiting) opens beside the office.
+          else if (pa) chat?.open(pa.hostId, pa.agentId, seat.brief || seat.name);
+          // A session from the logs on a computer with Paseo: take it into Paseo (one session from then on), or the old terminal.
+          else if (imp) {
+            const busy = seat.status === "working";
+            choose(
+              `${seat.name} 이어 가기`,
+              busy
+                ? "이 세션은 지금 다른 터미널에서 일하는 중이에요. Paseo로 가져오면 같은 대화를 두 프로세스가 이어 쓰게 되니, 그 터미널의 claude를 먼저 끝낸 뒤 가져오세요."
+                : "Paseo로 가져오면 이 세션을 Paseo가 맡아서, 여기 대화 창·🔔 권한 받은함·Paseo 앱이 모두 같은 세션으로 이어져요. 가져온 뒤에는 터미널에서 따로 --resume 하지 마세요.",
+              [
+                ...(busy ? [] : [{ label: "Paseo로 가져와서 이어 가기", primary: true, run: () => void takeIntoPaseo(seat, imp) }]),
+                ...(loc ? [{ label: "터미널에서 열기 (기존 방식)", run: () => {
+                  const cwd = seat.machine === HOME.id ? locals.find((l) => l.id === loc.threadId)?.cwd : undefined;
+                  void terms?.openCatalog(loc, `${seat.name}${seat.brief ? ` · ${seat.brief.slice(0, 24)}` : ""}`, sessionHref(seat) ?? undefined, cwd);
+                } }] : []),
+              ],
+            );
+          } else if (loc) {
             if (seat.status === "working") desk.say(`${seat.name}은(는) 다른 곳에서도 일하는 중이에요. 터미널 쪽 입력은 그 세션에 함께 들어가요.`);
             const cwd = seat.machine === HOME.id ? locals.find((l) => l.id === loc.threadId)?.cwd : undefined;
             void terms?.openCatalog(loc, `${seat.name}${seat.brief ? ` · ${seat.brief.slice(0, 24)}` : ""}`, sessionHref(seat) ?? undefined, cwd);
@@ -343,6 +496,15 @@ export default defineControlUiPlugin({
           }
           render();
         };
+        /** Each computer's Paseo agents and what they wait on (the Gateway reads every daemon at most every 1.5 s). */
+        async function pollPaseo() {
+          try {
+            const r = await feature.invoke("paseo-agents", {});
+            if (context.signal.aborted) return;
+            paseoHosts = r.hosts;
+          } catch { /* no Paseo support on this Gateway yet: the office works as before */ }
+          render();
+        }
         const pollRemote = async () => {
           try {
             const r = await feature.invoke("remote-machines", {});
@@ -371,6 +533,8 @@ export default defineControlUiPlugin({
         };
         void pollRemote();
         void pollCatalogs();
+        void pollPaseo();
+        const paseoTimer = setInterval(() => { if (!document.hidden) void pollPaseo(); }, PASEO_POLL_MS);
         // Each computer's health for the boards on the north wall (the Gateway reads it every 20 s in the background).
         const pollStats = async () => {
           try {
@@ -405,6 +569,8 @@ export default defineControlUiPlugin({
             clearInterval(remoteTimer);
             clearInterval(catalogTimer);
             clearInterval(statsTimer);
+            clearInterval(paseoTimer);
+            chat?.dispose();
             terms?.dispose();
             sub.dispose();
             unsub();

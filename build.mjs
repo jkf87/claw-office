@@ -46,9 +46,12 @@ const remoteScript = {
   },
 };
 
+// The Paseo client brings CommonJS packages (ws, tweetnacl) that call require() for Node built-ins; an ESM
+// bundle has no require of its own, so it gets one.
 await esbuild.build({
   entryPoints: ['src/index.ts'], bundle: true, format: 'esm', platform: 'node', target: 'node22', outfile: 'dist/index.js',
-  external: ['openclaw', 'openclaw/*'], plugins: [remoteScript], logLevel: 'warning',
+  external: ['openclaw', 'openclaw/*', 'bufferutil', 'utf-8-validate'], plugins: [remoteScript], logLevel: 'warning',
+  banner: { js: "import { createRequire as __clawCreateRequire } from 'node:module'; const require = __clawCreateRequire(import.meta.url);" },
 });
 
 const manifest = JSON.parse(readFileSync('openclaw.plugin.json', 'utf8'));

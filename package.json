@@ -19,6 +19,7 @@
     "openclaw": ">=2026.9.8"
   },
   "dependencies": {
+    "@getpaseo/client": "^0.13.2",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "three": "^0.186.1",

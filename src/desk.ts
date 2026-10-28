@@ -1,4 +1,6 @@
 import type { ControlUiHost, ControlUiSession } from "openclaw/plugin-sdk/control-ui";
+import { permissionCard, type PermitAnswer } from "./chat";
+import type { PaseoAgentRow, PaseoPermission } from "./paseo";
 
 // Giving an OpenClaw agent work, and the one place to look afterwards. The 「일 맡기기」 window asks three
 // things (what, which agent, what should be left when it's done) and starts a new session for it, so it
@@ -24,7 +26,19 @@ export interface Job {
   finishedAt?: number;
 }
 
-export interface AgentChoice { id: string; name: string; model: string; working: boolean }
+export interface AgentChoice { id: string; name: string; model: string; working: boolean; paseo?: { hostId: string; provider: "claude" | "codex" } }
+
+/** A Paseo agent's permission request waiting on you. */
+export interface PaseoWaiting { hostId: string; agentId: string; name: string; where: string; perm: PaseoPermission }
+
+/** What the desk asks of Paseo: answering its requests, opening an agent's conversation, starting a new agent. */
+export interface DeskPaseo {
+  permit(w: PaseoWaiting, answer: PermitAnswer): Promise<void>;
+  openChat(hostId: string, agentId: string, title: string): void;
+  create(input: { hostId: string; provider: "claude" | "codex"; cwd: string; prompt: string; title: string }): Promise<string>;
+}
+
+export type { PaseoAgentRow };
 
 const STORE = "claw-office:jobs";
 const QUIET_MS = 20_000;
@@ -57,14 +71,22 @@ export interface Desk {
   update(sessions: readonly ControlUiSession[], agents: readonly AgentChoice[]): void;
   /** Agents with a question waiting on you, for their red light. */
   readonly asking: ReadonlySet<string>;
+  /** Paseo's permission requests for the inbox, and the computers it can start new Claude Code / Codex agents on. */
+  setPaseo(waiting: readonly PaseoWaiting[], targets: readonly AgentChoice[]): void;
+  /** The folder a new Paseo agent starts in unless told otherwise. */
+  setDefaultCwd(cwd: string): void;
   dispose(): void;
 }
 
-export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortSignal, onTerminal?: (agentId: string) => void): Desk {
+export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortSignal, onTerminal?: (agentId: string) => void, paseo?: DeskPaseo): Desk {
   const jobs = load();
   let agents: readonly AgentChoice[] = [];
+  let paseoTargets: readonly AgentChoice[] = [];
+  let paseoWaiting: readonly PaseoWaiting[] = [];
+  let defaultCwd = "";
   let questions: QuestionRecord[] = [];
   const asking = new Set<string>();
+  const choices = () => [...agents, ...paseoTargets];
 
   // ── The inbox button and panel ──
   const bell = el("button", "claw-office-inbox-toggle");
@@ -108,6 +130,10 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
   const done = el("input", "claw-office-assign-done");
   done.placeholder = "끝나면 남아 있어야 할 것 (선택) 예: plan.md 수정 + 바꾼 이유 3줄";
   done.setAttribute("aria-label", "끝나면 남아 있어야 할 것");
+  // A Paseo agent starts in a folder of its own choosing; OpenClaw agents have their workspace already.
+  const cwdField = el("input", "claw-office-assign-cwd");
+  cwdField.placeholder = "폴더 (절대 경로)";
+  cwdField.setAttribute("aria-label", "어느 폴더에서");
   const row = el("div", "claw-office-assign-row");
   const cancel = el("button", "claw-office-btn", "닫기");
   cancel.type = "button";
@@ -127,7 +153,8 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
     l.append(el("span", "", text), field);
     return l;
   };
-  dialog.append(title, lab("누구에게", who), whoNote, lab("무엇을", what), lab("끝나면 남아 있어야 할 것", done), row);
+  const cwdLabel = lab("어느 폴더에서", cwdField);
+  dialog.append(title, lab("누구에게", who), whoNote, cwdLabel, lab("무엇을", what), lab("끝나면 남아 있어야 할 것", done), row);
   veil.append(dialog);
   const add = el("button", "claw-office-assign-open", "＋ 일 맡기기");
   add.type = "button";
@@ -140,17 +167,49 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
   veil.onclick = (e) => { if (e.target === veil) close(); };
   dialog.onkeydown = (e) => { if (e.key === "Escape") close(); };
   const noteFor = () => {
-    const a = agents.find((x) => x.id === who.value);
+    const a = choices().find((x) => x.id === who.value);
+    cwdLabel.hidden = !a?.paseo;
+    tui.hidden = !onTerminal || !!a?.paseo;
+    if (a?.paseo) {
+      if (!cwdField.value && defaultCwd) cwdField.value = defaultCwd;
+      whoNote.textContent = `Paseo가 이 폴더에서 새 ${a.paseo.provider === "codex" ? "Codex" : "Claude Code"} 세션을 시작해요. 권한 요청은 🔔에 뜨고, 옆 대화 창과 Paseo 앱에서 이어서 말할 수 있어요.`;
+      return;
+    }
     whoNote.textContent = a ? `${a.model || "기본 모델"} · ${a.working ? "지금 다른 일 중이에요. 새 세션으로 따로 시작해서 하던 일은 건드리지 않아요." : "새 세션으로 시작해요."}` : "";
   };
   who.onchange = noteFor;
 
+  /** A new Claude Code or Codex agent under Paseo, in the folder given: it opens beside the office right away. */
+  const assignPaseo = async (a: AgentChoice & { paseo: NonNullable<AgentChoice["paseo"]> }, task: string, goal: string) => {
+    const cwd = cwdField.value.trim();
+    if (!cwd.startsWith("/")) return say("폴더는 / 로 시작하는 절대 경로로 적어 주세요.", true);
+    if (!paseo) return;
+    const prompt = goal ? `${task}\n\n끝났다고 볼 기준: ${goal}\n끝나면 무엇을 했는지와 결과물 위치를 짧게 알려 줘.` : task;
+    const name = task.length > 60 ? `${task.slice(0, 59)}…` : task;
+    send.disabled = true;
+    try {
+      const agentId = await paseo.create({ hostId: a.paseo.hostId, provider: a.paseo.provider, cwd, prompt, title: name });
+      if (signal.aborted) return;
+      what.value = "";
+      done.value = "";
+      close();
+      say(`${a.name}에게 맡겼어요. 권한 요청이 오면 🔔에 나와요.`);
+      paseo.openChat(a.paseo.hostId, agentId, name);
+    } catch (err) {
+      say(`맡기지 못했어요: ${String((err as Error)?.message ?? err)}`, true);
+    } finally {
+      send.disabled = false;
+    }
+  };
+
   dialog.onsubmit = async (e) => {
     e.preventDefault();
-    const a = agents.find((x) => x.id === who.value);
+    const picked = choices().find((x) => x.id === who.value);
     const task = what.value.trim();
-    if (!a || !task) return;
+    if (!picked || !task) return;
     const goal = done.value.trim();
+    if (picked.paseo) return assignPaseo(picked as AgentChoice & { paseo: NonNullable<AgentChoice["paseo"]> }, task, goal);
+    const a = picked;
     const label = `claw-${Date.now().toString(36)}`;
     const message = goal ? `${task}\n\n끝났다고 볼 기준: ${goal}\n끝나면 무엇을 했는지와 결과물 위치를 짧게 알려 줘.` : `${task}\n\n끝나면 무엇을 했는지와 결과물 위치를 짧게 알려 줘.`;
     send.disabled = true;
@@ -179,7 +238,7 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
 
   // ── Inbox content ──
   const drawBell = () => {
-    const waiting = questions.length + jobs.filter((j) => j.state === "finished").length;
+    const waiting = questions.length + paseoWaiting.length + jobs.filter((j) => j.state === "finished").length;
     const running = jobs.filter((j) => j.state === "running").length;
     bell.textContent = waiting ? `🔔 나를 기다리는 것 ${waiting}` : running ? `🔔 맡긴 일 ${running}개 진행 중` : "🔔 받은함";
     bell.classList.toggle("is-hot", waiting > 0);
@@ -203,7 +262,26 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
     if (inbox.hidden) return;
     const parts: HTMLElement[] = [el("div", "claw-office-inbox-head", "나를 기다리는 것")];
     const finished = jobs.filter((j) => j.state === "finished");
-    if (!questions.length && !finished.length) parts.push(el("p", "claw-office-inbox-empty", "지금은 기다리는 게 없어요."));
+    if (!questions.length && !finished.length && !paseoWaiting.length) parts.push(el("p", "claw-office-inbox-empty", "지금은 기다리는 게 없어요."));
+    // Claude Code and Codex (through Paseo) waiting on a permission: answer here, or open the conversation.
+    for (const w of paseoWaiting) {
+      const open = el("button", "claw-office-btn", "대화 열기");
+      open.type = "button";
+      open.onclick = () => paseo?.openChat(w.hostId, w.agentId, w.name);
+      const card = permissionCard(w.perm, async (answer) => {
+        try {
+          await paseo?.permit(w, answer);
+          paseoWaiting = paseoWaiting.filter((x) => x.perm.id !== w.perm.id);
+          say(answer.allow ? `${w.name}: 허용했어요.` : `${w.name}: 거부했어요.`);
+          drawInbox();
+          drawBell();
+        } catch (err) {
+          say(`답하지 못했어요: ${String((err as Error)?.message ?? err)}`, true);
+        }
+      }, open);
+      card.prepend(el("div", "claw-office-card-kind", `${w.where} · ${w.name}`));
+      parts.push(card);
+    }
     for (const q of questions) {
       const card = el("section", "claw-office-card is-question");
       card.append(el("div", "claw-office-card-kind", `🔴 질문 · ${nameOf(q.agentId)} · ${ago(Date.now() - q.createdAtMs)}`));
@@ -342,13 +420,26 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
   const desk: Desk = {
     say,
     asking,
+    setPaseo(waiting, targets) {
+      const before = paseoWaiting.map((w) => w.perm.id).join("|");
+      paseoWaiting = waiting;
+      paseoTargets = targets;
+      if (waiting.map((w) => w.perm.id).join("|") !== before) {
+        drawBell();
+        drawInbox();
+      }
+    },
+    setDefaultCwd(cwd) {
+      defaultCwd = cwd;
+    },
     assign(agentId) {
-      who.replaceChildren(...agents.map((a) => {
+      const all = choices();
+      who.replaceChildren(...all.map((a) => {
         const o = new Option(`${a.name}${a.working ? " (일하는 중)" : ""}`, a.id);
         return o;
       }));
-      if (!agents.length) return say("일을 맡길 OpenClaw 에이전트가 아직 없어요.", true);
-      who.value = agents.some((a) => a.id === agentId) ? agentId : agents[0].id;
+      if (!all.length) return say("일을 맡길 에이전트가 아직 없어요.", true);
+      who.value = all.some((a) => a.id === agentId) ? agentId : all[0].id;
       noteFor();
       veil.hidden = false;
       what.focus();
