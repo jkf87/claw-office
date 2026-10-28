@@ -127,7 +127,7 @@ openclaw gateway restart
 
 ```sh
 npm run build       # dist/ 와 openclaw.plugin.json 의 controlUi 경로를 다시 만듦
-npm run typecheck   # 지금 기존 오류 32개 (vendor/ 26개, src/paseo.ts 6개)
+npm run typecheck   # vendor/ 쪽 기존 타입 오류 26개는 그대로 (src/ 는 0개)
 npm run validate
 ```
 

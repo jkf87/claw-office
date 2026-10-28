@@ -41,7 +41,7 @@ npm run typecheck
 npm run validate
 ```
 
-- `npm run typecheck`는 지금 `vendor/` 쪽 기존 오류 26개와 `src/paseo.ts`의 오류 6개(`@getpaseo/client/internal/daemon-client` 타입 선언을 못 찾는 것과 그 여파)를 냅니다. **이보다 늘지 않게** 해 주세요. 이 6개를 없애는 PR도 환영합니다.
+- `npm run typecheck`는 `vendor/` 쪽 기존 오류 26개를 그대로 냅니다. `src/`는 **0개를 유지**해 주세요.
 - 내 게이트웨이에 설치해서 바꾼 부분을 실제로 눌러 보세요. 화면이 바뀌었다면 PR에 스크린샷을 붙여 주세요.
 - 폰 폭(대화 창이 전체 화면으로 열리는지)과 한글 입력도 한 번 확인해 주세요.
 

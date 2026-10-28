@@ -30,7 +30,7 @@
     "@getpaseo/client": "^0.13.2",
     "@types/three": "^0.186.0",
     "esbuild": "0.28.2",
-    "openclaw": "2026.9.8",
+    "openclaw": "2026.10.5",
     "typescript": "7.0.2"
   },
   "openclaw": {
@@ -41,7 +41,7 @@
       "pluginApi": ">=2026.9.8"
     },
     "build": {
-      "openclawVersion": "2026.9.8"
+      "openclawVersion": "2026.10.5"
     }
   }
 }
