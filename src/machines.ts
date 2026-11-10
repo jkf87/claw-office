@@ -13,11 +13,14 @@ export interface MachineDef {
   shell: "zsh" | "bash";
   /** No Node there: only whether it answers. */
   probeOnly?: boolean;
+  /** How to start node there, reading the script from stdin, when it isn't the login shell's `node`
+   * (the A4000's WSL has none: Windows' own, through WSL's interop, from a Windows folder). */
+  node?: string;
 }
 
 export const MACHINES: MachineDef[] = [
   { id: "m2max", label: "M2 Max", ssh: "computer-c", shell: "zsh" },
-  { id: "a4000", label: "A4000", ssh: "a4000-wsl", shell: "bash", probeOnly: true },
+  { id: "a4000", label: "A4000", ssh: "a4000-wsl", shell: "bash", node: `cd /mnt/c && '/mnt/c/Program Files/nodejs/node.exe' -` },
 ];
 
 export interface RemoteAgent { id: string; model: string; sessions: number; updatedAt: number }
@@ -41,22 +44,32 @@ let stopped = false;
 
 function run(def: MachineDef, input: string | null): Promise<string> {
   return new Promise((resolve, reject) => {
-    const cmd = input === null ? "echo ok" : `${def.shell} -lc 'node -'`;
+    const cmd = input === null ? "echo ok" : def.node ?? `${def.shell} -lc 'node -'`;
     if (stopped) return reject(new Error("stopped"));
     const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", def.ssh, cmd], { stdio: ["pipe", "pipe", "pipe"] });
     children.add(child);
     child.on("exit", () => children.delete(child));
     let out = "";
     let err = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
+    // Settles once, on our own clock too: after the Mac sleeps an ssh can be killed yet never report "close",
+    // and a read that never settles would keep this computer "being read" (so never read again) for good.
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      children.delete(child);
+      fn();
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      settle(() => reject(new Error("ssh timed out")));
+    }, TIMEOUT_MS);
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));
-    child.on("error", (e) => { clearTimeout(timer); reject(e); });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve(out);
-      else reject(new Error(err.trim().split("\n").pop() || `ssh exited ${code}`));
-    });
+    child.on("error", (e) => settle(() => reject(e)));
+    child.on("close", (code) => settle(() => (code === 0 ? resolve(out) : reject(new Error(err.trim().split("\n").pop() || `ssh exited ${code}`)))));
+    child.stdin.on("error", () => { /* the ssh died before reading its input: "close" says why */ });
     child.stdin.end(input ?? "");
   });
 }

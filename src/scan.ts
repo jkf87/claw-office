@@ -133,6 +133,52 @@ async function codexTitles(home: string): Promise<Map<string, string>> {
   return titles;
 }
 
+/** A Claude Code subagent (Agent/Task tool) its parent session started: Claude keeps each one's log and a small
+ * meta file under <project>/<session id>/subagents/. Only ones at work or just finished are seated. */
+export interface ScannedSubagent {
+  id: string;
+  type: string;
+  description: string;
+  model: string;
+  updatedAt: number;
+  state: "working" | "done" | "idle";
+  actions: string[];
+}
+
+const SUBS_PER_SESSION = 12;
+/** A subagent not marked finished yet whose log has been quiet this long has died with its parent: no one to seat. */
+const SUB_STALE_MS = 30 * 60_000;
+
+async function subagentsOf(sessionFile: string, now: number): Promise<ScannedSubagent[]> {
+  const dir = join(sessionFile.slice(0, -".jsonl".length), "subagents");
+  let names: string[];
+  try { names = await readdir(dir); } catch { return []; }
+  const rows = await Promise.all(names.filter((n) => n.endsWith(".meta.json")).map(async (n): Promise<ScannedSubagent | null> => {
+    const base = n.slice(0, -".meta.json".length);
+    try {
+      const meta = JSON.parse(await readFile(join(dir, n), "utf8"));
+      const log = join(dir, `${base}.jsonl`);
+      const mtime = (await stat(log).catch(() => stat(join(dir, n)))).mtimeMs;
+      const finished = meta.finished === true;
+      const age = now - mtime;
+      if (finished ? age >= DONE_MS : age >= SUB_STALE_MS) return null;
+      return {
+        id: base.replace(/^agent-/, "").slice(0, 120),
+        type: String(meta.agentType ?? "").slice(0, 60),
+        description: one(meta.description).slice(0, 120),
+        model: String(meta.pickedEffortModel ?? meta.model ?? "").slice(0, 60),
+        updatedAt: mtime,
+        state: finished ? "done" : age < WORKING_MS * 4 ? "working" : "idle",
+        actions: [],
+      };
+    } catch { return null; }
+  }));
+  const subs = rows.filter((r): r is ScannedSubagent => r !== null).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, SUBS_PER_SESSION);
+  // Only the ones at work get their latest tool calls: a finished one's laptop just says it's done.
+  await Promise.all(subs.filter((x) => x.state === "working").map(async (x) => { x.actions = claudeBrief(await tail(join(dir, `agent-${x.id}.jsonl`))).actions; }));
+  return subs;
+}
+
 export interface ScannedSession {
   id: string;
   /** Its working folder, in full (where a new terminal for it would start). */
@@ -143,6 +189,8 @@ export interface ScannedSession {
   state: "working" | "done" | "idle";
   title: string;
   actions: string[];
+  /** Claude Code subagents of this session at work or just finished (none for Codex). */
+  subagents: ScannedSubagent[];
 }
 
 export async function scanSessions(home: string, hours: number, now = Date.now()): Promise<ScannedSession[]> {
@@ -166,6 +214,7 @@ export async function scanSessions(home: string, hours: number, now = Date.now()
       state: now - f.mtime < WORKING_MS ? "working" : now - f.mtime < DONE_MS ? "done" : "idle",
       title: brief.title.slice(0, 200),
       actions: brief.actions,
+      subagents: f.tool === "claude" ? await subagentsOf(f.file, now) : [],
     };
   }));
   return rows.filter((r): r is ScannedSession => r !== null);

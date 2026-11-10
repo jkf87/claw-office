@@ -32,6 +32,8 @@ export interface Terminals {
   openCatalog(loc: Locator, title: string, cwd?: string): Promise<void>;
   /** Starts a fresh CLI, an OpenClaw agent's TUI or a shell in a new tab. */
   openNew(kind: CliKind | "openclaw" | "shell", opts: { cwd?: string; agentId?: string; sessionKey?: string; title?: string }): Promise<void>;
+  /** A shell beside the office that runs one command right away (e.g. `herdr agent attach <agent>`). */
+  openCommand(command: string, title: string): Promise<void>;
   /** The folder new sessions start in unless told otherwise (the latest session's, as the office learns it). */
   setDefaultCwd(cwd: string): void;
   /** The OpenClaw agents to offer in 「새 터미널」. */
@@ -195,6 +197,30 @@ export function mountTerminals(root: HTMLElement, host: ControlUiHost, signal: A
     if (active === id) select([...tabs.keys()].at(-1) ?? "");
   };
 
+  /** xterm.js only scrolls with a wheel, so a phone's finger swipe does nothing. Turn vertical swipes into wheel
+   *  events on the terminal: xterm then scrolls its own history, or (in a full-screen app such as Herdr or
+   *  Claude Code) passes the wheel on to that app just as a mouse wheel would. A tap still focuses the terminal. */
+  const swipeToScroll = (pane: HTMLElement) => {
+    let lastY: number | null = null;
+    let moved = 0;
+    pane.addEventListener("touchstart", (e) => {
+      lastY = e.touches.length === 1 ? e.touches[0].clientY : null;
+      moved = 0;
+    }, { passive: true });
+    pane.addEventListener("touchmove", (e) => {
+      if (lastY == null || e.touches.length !== 1) return;
+      const y = e.touches[0].clientY;
+      const dy = lastY - y;
+      moved += Math.abs(dy);
+      if (moved < 6) return;
+      lastY = y;
+      e.preventDefault();
+      const target = pane.querySelector(".xterm-screen") ?? pane;
+      target.dispatchEvent(new WheelEvent("wheel", { deltaY: dy * 1.6, deltaMode: 0, bubbles: true, cancelable: true, clientX: e.touches[0].clientX, clientY: y }));
+    }, { passive: false });
+    pane.addEventListener("touchend", () => (lastY = null), { passive: true });
+  };
+
   /** Puts a Gateway terminal session in a tab, writing what it printed so far. */
   const adopt = (sessionId: string, title: string, buffer = "") => {
     if (tabs.has(sessionId)) return select(sessionId);
@@ -204,6 +230,7 @@ export function mountTerminals(root: HTMLElement, host: ControlUiHost, signal: A
     const box = el("div", "claw-term-pane");
     body.append(box);
     term.open(box);
+    swipeToScroll(box);
     if (buffer) term.write(buffer);
     term.onData((data) => void host.request("terminal.input", { sessionId, data }).catch(() => {}));
     const tabEl = el("div", "claw-term-tab");
@@ -271,6 +298,15 @@ export function mountTerminals(root: HTMLElement, host: ControlUiHost, signal: A
           }
         }
         if (!signal.aborted) adopt(r.sessionId, title);
+      } catch (err) { fail("터미널을 열지 못했어요", err); }
+    },
+    async openCommand(command, title) {
+      show(true);
+      try {
+        const r = await host.request<{ sessionId: string }>("terminal.open", { agentId: host.agents.defaultId ?? "main", ...size() });
+        if (signal.aborted) return;
+        adopt(r.sessionId, title);
+        await host.request("terminal.input", { sessionId: r.sessionId, data: `${command}\r` });
       } catch (err) { fail("터미널을 열지 못했어요", err); }
     },
     async openNew(k, opts) {

@@ -7,9 +7,11 @@ import { Worker } from '../../vendor/agent-office/client/world/character/worker'
 import { Laptop } from '../../vendor/agent-office/client/features/workers/laptop';
 import { noOutline } from '../../vendor/agent-office/client/core/outline';
 import { GLASS } from '../../vendor/agent-office/client/world/office/materials';
-import { FLOOR } from '../../vendor/agent-office/shared/layout';
+import { FLOOR, LOFT, MEETING_ROOM, STAIRS } from '../../vendor/agent-office/shared/layout';
+import { disposeSprite, textSprite } from '../../vendor/agent-office/client/world/toon';
 import { StatusBoards, type BoardStats } from './boards';
-import { AREAS, PER_POD, allotPods, buildFloor, buildLounge, clearForPods, type Floor, type Zone, type ZoneTool } from './floorplan';
+import type { FlowRow } from '../flow';
+import { AREAS, MEETING, MEETING_DOOR, PER_POD, allotPods, buildFloor, buildLounge, buildMeetingTable, clearForPods, type Floor, type MeetingChair, type Zone, type ZoneTool, zoneDesks } from './floorplan';
 import type { DeskView, Office } from '../../vendor/agent-office/client/world/types';
 import type { WorkerAction, WorkerStatus } from '../../vendor/agent-office/shared/protocol';
 
@@ -36,6 +38,12 @@ export interface Seat {
   brief: string;
   /** Its latest tool calls, oldest first, shown on its laptop like a terminal. */
   actions: string[];
+  /** When it last did something (ms), for the briefing's order. */
+  at?: number;
+  /** A process is running it right now (a Herdr pane, a Paseo agent, an OpenClaw agent, a CLI still writing its log), not just a log left behind. */
+  live?: boolean;
+  /** A subagent's lead: the key of the session that called it. While any of a lead's subagents works, they meet with it in the meeting room. */
+  team?: string;
 }
 
 /** A worker on its way home: packing up at its desk, then walking off, then gone. */
@@ -51,11 +59,42 @@ interface Placed {
   laptop: Laptop;
   painted: string;
   frames: number;
-  /** Where its worker is: at its desk, resting in the lounge, on its way between them, or unseated. */
-  where: 'desk' | 'lounge' | 'walking' | 'gone';
-  /** Its bean bag in the lounge while it rests (its desk stays its own meanwhile). */
+  /** Where its worker is: at its desk, resting in the lounge, in a meeting, on its way between them, or unseated. */
+  where: 'desk' | 'lounge' | 'meeting' | 'walking' | 'gone';
+  /** Its bean bag in the lounge while it rests, or its chair in the meeting room (its desk stays its own meanwhile). */
   away?: THREE.Object3D;
-  walk?: { to: THREE.Object3D; from: THREE.Vector3; target: THREE.Vector3; t: number; dur: number };
+  /** Its laptop, shut, in its hands: on the way to a meeting and back. */
+  carrying?: boolean;
+  /** Where it walks: the waypoints in the room's own space (the meeting room's door), the last one where `to` is. */
+  walk?: { to: THREE.Object3D; from: THREE.Vector3; pts: THREE.Vector3[]; i: number; t: number };
+}
+
+/** Where a carried laptop rides: shut, flat in front of its worker's chest (a worker faces its +z). */
+const CARRY = { x: 0, y: 0.6, z: 0.34, scale: 0.55 };
+/** How many teams the meeting room holds at once: one from each end of the table. */
+const MEETING_TEAMS = 2;
+
+/**
+ * Agent Office's loft (the boss's office over the meeting room) and the stairs up to it stand between the
+ * camera and the meeting table, and its own table seats five: all of it goes, the glass round the room stays.
+ */
+function clearMeetingRoom(root: THREE.Object3D) {
+  const box = new THREE.Box3();
+  const c = new THREE.Vector3();
+  const hide: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if ((!m.isMesh && !(o as THREE.Sprite).isSprite) || !o.visible) return;
+    box.setFromObject(o);
+    if (box.isEmpty()) return;
+    box.getCenter(c);
+    const flat = box.max.y < 0.03;
+    const small = box.max.x - box.min.x < 8 && box.max.z - box.min.z < 8;
+    if (c.x > LOFT.minX - 0.4 && c.z > LOFT.minZ - 0.4 && box.min.y > LOFT.y - 0.35) hide.push(o);
+    else if (small && !flat && c.x > STAIRS.fromX - 0.3 && c.x < STAIRS.toX + 0.3 && c.z > STAIRS.minZ - 0.3 && box.min.y < LOFT.y + 0.5) hide.push(o);
+    else if (small && !flat && m.material !== GLASS && c.x > MEETING_ROOM.minX + 0.35 && c.z > MEETING_ROOM.minZ + 0.35 && box.max.y < 1.3) hide.push(o);
+  });
+  for (const o of hide) o.visible = false;
 }
 
 /** How fast a worker crosses the floor, and the shortest and longest such walk. */
@@ -129,6 +168,10 @@ export class OfficeScene {
   readonly ready: Promise<void>;
   onPick: ((seat: Seat) => void) | null = null;
   onHover: ((seat: Seat | null) => void) | null = null;
+  /** A computer's board on the north wall was clicked, or hovered (null when the pointer leaves it). */
+  onBoard: ((machine: string) => void) | null = null;
+  onBoardHover: ((machine: string | null) => void) | null = null;
+  private hoveredBoard: string | null = null;
   private renderer: THREE.WebGLRenderer;
   private effect: OutlineEffect;
   private scene = new THREE.Scene();
@@ -138,10 +181,18 @@ export class OfficeScene {
   private pods: Floor | null = null;
   private boards: StatusBoards | null = null;
   private pendingStats: readonly BoardStats[] = [];
+  private pendingFlow: ReadonlyMap<string, readonly FlowRow[]> = new Map();
   private zoneKey = '';
   private placed = new Map<string, Placed>();
   private leaving: Leaving[] = [];
   private lounge: THREE.Object3D[] = [];
+  private meetChairs: MeetingChair[] = [];
+  /** Leads whose subagents are at work, in the order they called them (the first two get the room). */
+  private meetings: string[] = [];
+  /** Who sits where in the meeting room. */
+  private meetingSeat = new Map<string, MeetingChair>();
+  private meetingSign: THREE.Sprite | null = null;
+  private meetingSignText = '';
   private pending: Seat[] = [];
   private clock = new THREE.Clock();
   private raf = 0;
@@ -201,6 +252,9 @@ export class OfficeScene {
     this.controls.minDistance = 8;
     this.controls.maxDistance = 70;
     this.controls.maxPolarAngle = 1.25;
+    // On a phone, one finger slides the view over the floor and two turn it (and pinch to zoom); a mouse is as before.
+    this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+    this.controls.screenSpacePanning = false;
     this.controls.update();
 
     canvas.addEventListener('pointermove', (e) => this.hover(e));
@@ -210,7 +264,9 @@ export class OfficeScene {
     canvas.addEventListener('click', (e) => {
       if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
       const hit = this.pick(e);
-      if (hit && this.onPick) this.onPick(hit.seat);
+      if (hit) return void this.onPick?.(hit.seat);
+      const board = this.boards?.hit(this.ray);
+      if (board) this.onBoard?.(board.machine);
     });
     window.addEventListener('keydown', this.onShift);
     window.addEventListener('keyup', this.onShift);
@@ -234,6 +290,11 @@ export class OfficeScene {
       });
       hideWalls(office.group);
       clearForPods(office.group);
+      clearMeetingRoom(office.group);
+      const meet = buildMeetingTable();
+      noOutline(meet.group);
+      this.scene.add(meet.group);
+      this.meetChairs = meet.chairs;
       const pods = buildFloor();
       noOutline(pods.group);
       this.scene.add(pods.group);
@@ -245,6 +306,7 @@ export class OfficeScene {
       this.office = office;
       this.boards = new StatusBoards(office as unknown as ConstructorParameters<typeof StatusBoards>[0]);
       this.boards.update(this.pendingStats);
+      this.boards.updateFlow(this.pendingFlow);
       this.setSeats(this.pending);
     });
   }
@@ -274,13 +336,13 @@ export class OfficeScene {
       const working = mine.filter((s) => s.status === 'working').length;
       return { area: a.id, text: `🖥 ${a.label} · ${mine.length}명${working ? ` · 일하는 중 ${working}` : ''}` };
     });
-    const key = zones.map((z) => `${z.area}:${z.tool}:${z.pods.length}:${z.count}`).join('|') + signs.map((x) => x.text).join('|');
+    const key = zones.map((z) => `${z.area}:${z.tool}:${z.pods.length}:${z.count}:${z.desks?.length ?? '-'}`).join('|') + signs.map((x) => x.text).join('|');
     if (key !== this.zoneKey) {
       this.zoneKey = key;
       pods.setLayout(zones, signs);
     }
     const slot = (machine: string, tool: string) => `${machine}:${tool}`;
-    const slots = new Map(zones.map((z) => [slot(z.area, z.tool), z.pods.flatMap((p) => p.desks)]));
+    const slots = new Map(zones.map((z) => [slot(z.area, z.tool), zoneDesks(z)]));
     const wanted = new Map<string, Seat>();
     for (const z of zones) seats.filter((s) => s.machine === z.area && s.tool === z.tool).slice(0, slots.get(slot(z.area, z.tool))!.length).forEach((s) => wanted.set(s.key, s));
 
@@ -319,13 +381,110 @@ export class OfficeScene {
       p.worker.setTask({ name: `${TOOL_BADGE[seat.tool]} · ${seat.name}`, summary: seat.brief || seat.card });
       p.worker.setAction(actionOf(seat));
       noOutline(p.worker.root);
-      this.restOrReturn(p);
+    }
+    this.callMeetings(seats);
+    for (const p of this.placed.values()) this.place(p);
+  }
+
+  /**
+   * Who meets: a lead (a session) and its subagents, while any of them works. Each team keeps its end of the
+   * table (the first at the door's end, a second from the far end), its lead at the head, and each member the
+   * chair it had; a third team waits at its desks until there's room.
+   */
+  private callMeetings(seats: readonly Seat[]) {
+    const teams = new Map<string, Seat[]>();
+    for (const s of seats) {
+      if (!s.team || !this.placed.has(s.key) || (s.status !== 'working' && s.status !== 'needs_input')) continue;
+      teams.set(s.team, [...(teams.get(s.team) ?? []), s]);
+    }
+    this.meetings = this.meetings.filter((k) => teams.has(k));
+    for (const k of teams.keys()) if (!this.meetings.includes(k)) this.meetings.push(k);
+    const now = this.meetings.slice(0, MEETING_TEAMS);
+    const next = new Map<string, MeetingChair>();
+    const taken = new Set<MeetingChair>();
+    const ends = [this.meetChairs, [...this.meetChairs].reverse()];
+    now.forEach((lead, i) => {
+      const head = ends[i][0];
+      if (!head) return;
+      taken.add(head);
+      if (this.placed.has(lead)) next.set(lead, head);
+    });
+    now.forEach((lead, i) => {
+      for (const m of [...teams.get(lead)!].sort((a, b) => a.key.localeCompare(b.key))) {
+        const had = this.meetingSeat.get(m.key);
+        const chair = had && !had.head && !taken.has(had) ? had : ends[i].find((c) => !c.head && !taken.has(c));
+        if (!chair) break;
+        taken.add(chair);
+        next.set(m.key, chair);
+      }
+    });
+    this.meetingSeat = next;
+    const label = (k: string) => (seats.find((s) => s.key === k)?.name ?? seats.find((s) => s.team === k)?.name ?? '').replace(/^↳ /, '');
+    const text = now.length ? `🤝 회의 중 · ${now.map((k) => `${label(k)} 팀 ${(teams.get(k)?.length ?? 0) + (this.placed.has(k) ? 1 : 0)}명`).join(' · ')}` : '🤝 회의실';
+    if (text !== this.meetingSignText) {
+      this.meetingSignText = text;
+      if (this.meetingSign) {
+        this.scene.remove(this.meetingSign);
+        disposeSprite(this.meetingSign);
+      }
+      this.meetingSign = textSprite(text, { bg: now.length ? '#2b2d42' : '#6c757d', color: '#fffaf3', size: 60, border: '#fffaf3' });
+      this.meetingSign.position.set(MEETING.x, 3.4, MEETING_ROOM.minZ + 0.4);
+      this.scene.add(this.meetingSign);
     }
   }
 
-  /** An agent with nothing to do goes and sits in the lounge (while a bean bag is free); with work again, back to its desk. */
+  /** Sends a worker where it belongs now: its meeting chair, the lounge if it has nothing to do, else its desk. Not while it's on its way somewhere: it decides again when it gets there. */
+  private place(p: Placed) {
+    if (p.where === 'walking' || p.where === 'gone') return;
+    const chair = this.meetingSeat.get(p.seat.key);
+    const door = (...ks: ('out' | 'in')[]) => ks.map((k) => new THREE.Vector3(MEETING_DOOR[k].x, 0, MEETING_DOOR[k].z));
+    if (chair) {
+      if (p.where === 'meeting' && p.away === chair.seatAnchor) return;
+      // Resting in the lounge: back to its desk for its laptop first.
+      if (p.where === 'lounge') {
+        p.away = undefined;
+        return this.walkTo(p, p.desk.seatAnchor);
+      }
+      const from = p.where;
+      this.pickUp(p);
+      p.away = chair.seatAnchor;
+      return this.walkTo(p, chair.seatAnchor, from === 'meeting' ? [] : door('out', 'in'));
+    }
+    if (p.where === 'meeting') {
+      this.pickUp(p);
+      p.away = undefined;
+      return this.walkTo(p, p.desk.seatAnchor, door('in', 'out'));
+    }
+    this.restOrReturn(p);
+  }
+
+  /** Shuts its laptop and takes it in its hands. */
+  private pickUp(p: Placed) {
+    const l = p.laptop.root;
+    p.worker.root.add(l);
+    l.position.set(CARRY.x, CARRY.y, CARRY.z);
+    l.rotation.set(0, 0, 0);
+    l.scale.setScalar(CARRY.scale);
+    p.carrying = true;
+  }
+
+  /** Puts its laptop down at `anchor` (it opens there), and moves its globe beside it. */
+  private putDown(p: Placed, anchor: THREE.Object3D) {
+    const l = p.laptop.root;
+    anchor.add(l);
+    l.position.set(0, 0, 0);
+    l.rotation.set(0, 0, 0);
+    l.scale.setScalar(1);
+    p.carrying = false;
+    p.worker.root.updateWorldMatrix(true, false);
+    anchor.updateWorldMatrix(true, false);
+    p.worker.setPropSpot(p.worker.root.worldToLocal(anchor.localToWorld(new THREE.Vector3(0.64, 0.5, -0.1))));
+  }
+
+  /** A session with nothing to do goes and sits in the lounge (while a bean bag is free); with work again, back to its desk.
+   * OpenClaw agents are staff: they wait at their own desks, so each computer's team shows in its own area. */
   private restOrReturn(p: Placed) {
-    const resting = p.seat.status === 'idle';
+    const resting = p.seat.status === 'idle' && p.seat.tool !== 'openclaw';
     if (resting && !p.away && p.where === 'desk') {
       const taken = new Set([...this.placed.values()].map((q) => q.away));
       const spot = this.lounge.find((b) => !taken.has(b));
@@ -338,14 +497,12 @@ export class OfficeScene {
     }
   }
 
-  /** Lifts the worker out of where it sits and sets it walking, in the room's own space, to `to`. */
-  private walkTo(p: Placed, to: THREE.Object3D) {
+  /** Lifts the worker out of where it sits and sets it walking, in the room's own space, through `via` to `to`. */
+  private walkTo(p: Placed, to: THREE.Object3D, via: THREE.Vector3[] = []) {
     const root = p.worker.root;
     this.scene.attach(root);
     const target = to.getWorldPosition(new THREE.Vector3());
-    const from = root.position.clone();
-    const dur = Math.max(STROLL_MIN_S, Math.min(STROLL_MAX_S, from.distanceTo(target) / STROLL));
-    p.walk = { to, from, target, t: 0, dur };
+    p.walk = { to, from: root.position.clone(), pts: [...via.map((v) => v.setY(target.y)), target], i: 0, t: 0 };
     p.where = 'walking';
     p.worker.walking = true;
   }
@@ -356,18 +513,30 @@ export class OfficeScene {
       const w = p.walk;
       if (!w) continue;
       w.t += dt;
-      const k = Math.min(1, w.t / w.dur);
+      const a = w.i ? w.pts[w.i - 1] : w.from;
+      const b = w.pts[w.i];
+      const dur = Math.max(STROLL_MIN_S, Math.min(STROLL_MAX_S, a.distanceTo(b) / STROLL));
+      const k = Math.min(1, w.t / dur);
       const root = p.worker.root;
-      root.position.lerpVectors(w.from, w.target, k);
-      root.rotation.set(0, Math.atan2(w.target.x - w.from.x, w.target.z - w.from.z), 0);
+      root.position.lerpVectors(a, b, k);
+      if (a.distanceToSquared(b) > 1e-4) root.rotation.set(0, Math.atan2(b.x - a.x, b.z - a.z), 0);
       if (k < 1) continue;
+      if (w.i < w.pts.length - 1) {
+        w.i++;
+        w.t = 0;
+        continue;
+      }
       w.to.attach(root);
       root.position.set(0, 0, 0);
       root.rotation.set(0, 0, 0);
       root.scale.setScalar(1);
       p.walk = undefined;
       p.worker.walking = false;
-      p.where = w.to === p.desk.seatAnchor ? 'desk' : 'lounge';
+      const chair = this.meetChairs.find((c) => c.seatAnchor === w.to);
+      p.where = w.to === p.desk.seatAnchor ? 'desk' : chair ? 'meeting' : 'lounge';
+      if (p.carrying) this.putDown(p, chair ? chair.laptopAnchor : p.desk.laptopAnchor);
+      // Things may have moved on while it walked.
+      this.place(p);
     }
   }
 
@@ -375,6 +544,7 @@ export class OfficeScene {
     p.desk = desk;
     p.away = undefined;
     p.walk = undefined;
+    p.carrying = false;
     p.where = 'desk';
     p.worker.walking = false;
     desk.seatAnchor.add(p.worker.root);
@@ -383,14 +553,18 @@ export class OfficeScene {
     p.worker.root.scale.setScalar(1);
     p.worker.setPropSpot(p.worker.root.worldToLocal(desk.laptopAnchor.localToWorld(new THREE.Vector3(0.64, 0.5, -0.1))));
     desk.laptopAnchor.add(p.laptop.root);
+    p.laptop.root.position.set(0, 0, 0);
+    p.laptop.root.rotation.set(0, 0, 0);
+    p.laptop.root.scale.setScalar(1);
     desk.chair.rotation.y = 0;
     noOutline(desk.group);
   }
 
   private unseat(p: Placed) {
     p.worker.root.removeFromParent();
-    p.desk.laptopAnchor.remove(p.laptop.root);
+    p.laptop.root.removeFromParent();
     p.away = undefined;
+    p.carrying = false;
     p.walk = undefined;
     p.where = 'gone';
   }
@@ -399,6 +573,12 @@ export class OfficeScene {
   setStats(stats: readonly BoardStats[]) {
     this.pendingStats = stats;
     this.boards?.update(stats);
+  }
+
+  /** Each computer's session flow, under its health on the same board. */
+  setFlow(flows: ReadonlyMap<string, readonly FlowRow[]>) {
+    this.pendingFlow = flows;
+    this.boards?.updateFlow(flows);
   }
 
   start() {
@@ -444,7 +624,10 @@ export class OfficeScene {
     const people: { x: number; y: number; z: number }[] = [];
     for (const p of this.placed.values()) {
       p.worker.update(dt, t);
-      p.laptop.update(dt, undefined, 30);
+      // Carried, it stays shut; set down, it opens again.
+      if (p.carrying) p.laptop.shut(1);
+      else p.laptop.update(dt, undefined, 30);
+      if (p.walk) people.push(p.worker.root.position);
       // Its own screen over the laptop's placeholder, once the laptop has painted that.
       if (++p.frames > 2) this.paintScreen(p);
     }
@@ -586,9 +769,15 @@ export class OfficeScene {
 
   private hover(e: PointerEvent) {
     const hit = this.pick(e);
+    // A board behind nobody: the pick just aimed the ray, so it only needs testing.
+    const board = hit ? null : (this.boards?.hit(this.ray)?.machine ?? null);
+    if (board !== this.hoveredBoard) {
+      this.hoveredBoard = board;
+      this.onBoardHover?.(board);
+    }
+    this.renderer.domElement.style.cursor = hit || board ? 'pointer' : '';
     if (hit === this.hovered) return;
     this.hovered = hit;
-    this.renderer.domElement.style.cursor = hit ? 'pointer' : '';
     this.onHover?.(hit ? hit.seat : null);
   }
 }

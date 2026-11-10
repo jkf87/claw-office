@@ -26,7 +26,7 @@ export interface Job {
   finishedAt?: number;
 }
 
-export interface AgentChoice { id: string; name: string; model: string; working: boolean; paseo?: { hostId: string; provider: "claude" | "codex" } }
+export interface AgentChoice { id: string; name: string; model: string; working: boolean; paseo?: { hostId: string; provider: "claude" | "codex"; via?: "paseo" | "herdr" } }
 
 /** A Paseo agent's permission request waiting on you. */
 export interface PaseoWaiting { hostId: string; agentId: string; name: string; where: string; perm: PaseoPermission }
@@ -172,7 +172,7 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
     tui.hidden = !onTerminal || !!a?.paseo;
     if (a?.paseo) {
       if (!cwdField.value && defaultCwd) cwdField.value = defaultCwd;
-      whoNote.textContent = `Paseo가 이 폴더에서 새 ${a.paseo.provider === "codex" ? "Codex" : "Claude Code"} 세션을 시작해요. 권한 요청은 🔔에 뜨고, 옆 대화 창과 Paseo 앱에서 이어서 말할 수 있어요.`;
+      whoNote.textContent = a.paseo.via === "herdr" ? `Herdr가 이 폴더에 새 탭을 열고 ${a.paseo.provider === "codex" ? "Codex" : "Claude Code"}를 시작해요. 직원을 누르면 옆 터미널에서 그 세션을 이어 봐요.` : `Paseo가 이 폴더에서 새 ${a.paseo.provider === "codex" ? "Codex" : "Claude Code"} 세션을 시작해요. 권한 요청은 🔔에 뜨고, 옆 대화 창과 Paseo 앱에서 이어서 말할 수 있어요.`;
       return;
     }
     whoNote.textContent = a ? `${a.model || "기본 모델"} · ${a.working ? "지금 다른 일 중이에요. 새 세션으로 따로 시작해서 하던 일은 건드리지 않아요." : "새 세션으로 시작해요."}` : "";
@@ -193,7 +193,7 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
       what.value = "";
       done.value = "";
       close();
-      say(`${a.name}에게 맡겼어요. 권한 요청이 오면 🔔에 나와요.`);
+      say(a.paseo.via === "herdr" ? `${a.name}에게 맡겼어요. 확인을 기다리면 직원 머리 위가 빨갛게 바뀌어요.` : `${a.name}에게 맡겼어요. 권한 요청이 오면 🔔에 나와요.`);
       paseo.openChat(a.paseo.hostId, agentId, name);
     } catch (err) {
       say(`맡기지 못했어요: ${String((err as Error)?.message ?? err)}`, true);

@@ -35,7 +35,9 @@ let stopped = false;
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     if (stopped) return reject(new Error("stopped"));
-    const child = execFile(cmd, args, { timeout: TIMEOUT_MS, maxBuffer: 1 << 20 }, (err, out) => (err ? reject(err) : resolve(String(out))));
+    // Our own deadline as well as execFile's: its callback waits for "close", which may never come after sleep.
+    const guard = setTimeout(() => { child.kill("SIGKILL"); reject(new Error(`${cmd} timed out`)); }, TIMEOUT_MS + 2_000);
+    const child = execFile(cmd, args, { timeout: TIMEOUT_MS, maxBuffer: 1 << 20 }, (err, out) => { clearTimeout(guard); err ? reject(err) : resolve(String(out)); });
     children.add(child);
     child.on("exit", () => children.delete(child));
   });
@@ -49,14 +51,23 @@ function ssh(host: string, command: string): Promise<string> {
     child.on("exit", () => children.delete(child));
     let out = "";
     let err = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
+    // Settles once, on our own clock too (see machines.ts: a killed ssh may never report "close" after sleep).
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      children.delete(child);
+      fn();
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      settle(() => reject(new Error("ssh timed out")));
+    }, TIMEOUT_MS);
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (err += d));
-    child.on("error", (e) => { clearTimeout(timer); reject(e); });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      code === 0 ? resolve(out) : reject(new Error(err.trim().split("\n").pop() || `ssh exited ${code}`));
-    });
+    child.on("error", (e) => settle(() => reject(e)));
+    child.on("close", (code) => settle(() => (code === 0 ? resolve(out) : reject(new Error(err.trim().split("\n").pop() || `ssh exited ${code}`)))));
   });
 }
 

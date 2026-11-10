@@ -12,6 +12,16 @@ const LocalSession = Type.Object({
   title: Type.String({ maxLength: 200 }),
   /** Its latest tool calls, oldest first: commands it ran and files it read or changed, never message text. */
   actions: Type.Array(Type.String({ maxLength: 160 }), { maxItems: 12 }),
+  /** Claude Code subagents it started that are at work or just finished: their task description, never message text. */
+  subagents: Type.Optional(Type.Array(Type.Object({
+    id: Type.String({ maxLength: 120 }),
+    type: Type.String({ maxLength: 60 }),
+    description: Type.String({ maxLength: 120 }),
+    model: Type.String({ maxLength: 60 }),
+    updatedAt: Type.Number(),
+    state: Type.Union([Type.Literal("working"), Type.Literal("done"), Type.Literal("idle")]),
+    actions: Type.Array(Type.String({ maxLength: 160 }), { maxItems: 12 }),
+  }), { maxItems: 12 })),
 });
 
 const RemoteAgent = Type.Object({
@@ -29,6 +39,22 @@ const Machine = Type.Object({
   fetchedAt: Type.Number(),
   agents: Type.Array(RemoteAgent, { maxItems: 64 }),
   sessions: Type.Array(LocalSession, { maxItems: 40 }),
+});
+
+const HerdrHost = Type.Object({
+  id: Type.String({ maxLength: 40 }),
+  label: Type.String({ maxLength: 80 }),
+  machine: Type.String({ maxLength: 80 }),
+  connected: Type.Boolean(),
+  error: Type.String({ maxLength: 240 }),
+  agents: Type.Array(Type.Object({
+    target: Type.String({ maxLength: 120 }),
+    name: Type.String({ maxLength: 120 }),
+    agent: Type.String({ maxLength: 40 }),
+    status: Type.Union([Type.Literal("idle"), Type.Literal("working"), Type.Literal("blocked"), Type.Literal("done"), Type.Literal("unknown")]),
+    cwd: Type.String({ maxLength: 400 }),
+    title: Type.String({ maxLength: 200 }),
+  }), { maxItems: 64 }),
 });
 
 const Gpu = Type.Object({ name: Type.String({ maxLength: 120 }), util: Type.Number(), memUsed: Type.Number(), memTotal: Type.Number(), temp: Type.Number() });
@@ -120,6 +146,54 @@ export const contract = defineFeatureContract({
       description: "Record a folder as trusted for Claude Code or Codex so a terminal opened there skips the trust question.",
       input: Type.Object({ tool: Type.Union([Type.Literal("claude"), Type.Literal("codex")]), cwd: Type.String({ minLength: 1, maxLength: 4096 }) }, { additionalProperties: false }),
       output: Type.Object({ changed: Type.Boolean() }),
+    },
+    "herdr-agents": {
+      kind: "query",
+      description: "Each computer's Herdr agents (Claude Code and Codex in Herdr panes): name, status (idle/working/blocked/done), folder and terminal title.",
+      input: Type.Object({}, { additionalProperties: false }),
+      output: Type.Object({ now: Type.Number(), hosts: Type.Array(HerdrHost, { maxItems: 8 }) }),
+    },
+    "herdr-prompt": {
+      kind: "action",
+      description: "Type a prompt into a Herdr agent and press Enter.",
+      input: Type.Object({ hostId: Type.String({ minLength: 1, maxLength: 40 }), target: Type.String({ minLength: 1, maxLength: 120 }), text: Type.String({ minLength: 1, maxLength: 20000 }) }, { additionalProperties: false }),
+      output: Type.Object({ ok: Type.Boolean() }),
+    },
+    "herdr-keys": {
+      kind: "action",
+      description: "Press keys in a Herdr agent waiting at a question or approval dialog.",
+      input: Type.Object({ hostId: Type.String({ minLength: 1, maxLength: 40 }), target: Type.String({ minLength: 1, maxLength: 120 }), keys: Type.Array(Type.String({ minLength: 1, maxLength: 20 }), { minItems: 1, maxItems: 8 }) }, { additionalProperties: false }),
+      output: Type.Object({ ok: Type.Boolean() }),
+    },
+    "herdr-read": {
+      kind: "query",
+      description: "The last lines of a Herdr agent's terminal, to see what it asks before answering.",
+      input: Type.Object({ hostId: Type.String({ minLength: 1, maxLength: 40 }), target: Type.String({ minLength: 1, maxLength: 120 }), lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }, { additionalProperties: false }),
+      output: Type.Object({ text: Type.String({ maxLength: 16000 }) }),
+    },
+    "herdr-create": {
+      kind: "action",
+      description: "Open a new Herdr tab in a folder on one computer, start Claude Code or Codex there and give it its first prompt.",
+      input: Type.Object({
+        hostId: Type.String({ minLength: 1, maxLength: 40 }),
+        provider: Cli,
+        cwd: Type.String({ minLength: 1, maxLength: 4096 }),
+        prompt: Type.String({ minLength: 1, maxLength: 20000 }),
+        title: Type.Optional(Type.String({ maxLength: 200 })),
+      }, { additionalProperties: false }),
+      output: Type.Object({ agentId: Type.String({ maxLength: 120 }) }),
+    },
+    "herdr-resume": {
+      kind: "action",
+      description: "Continue an existing Claude Code or Codex session (by its session id) in a new Herdr tab in its folder.",
+      input: Type.Object({
+        hostId: Type.String({ minLength: 1, maxLength: 40 }),
+        provider: Cli,
+        cwd: Type.String({ minLength: 1, maxLength: 4096 }),
+        sessionId: Type.String({ minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9_.:-]+$" }),
+        title: Type.Optional(Type.String({ maxLength: 200 })),
+      }, { additionalProperties: false }),
+      output: Type.Object({ agentId: Type.String({ maxLength: 120 }) }),
     },
     "paseo-agents": {
       kind: "query",

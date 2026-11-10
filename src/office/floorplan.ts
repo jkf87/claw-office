@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { buildBeanbag, buildDesk } from '../../vendor/agent-office/client/world/office/seats';
+import { buildBeanbag, buildDesk, chair } from '../../vendor/agent-office/client/world/office/seats';
+import { PALETTE } from '../../vendor/agent-office/client/world/office/materials';
 import { plant } from '../../vendor/agent-office/client/world/office/props';
 import { disposeSprite, mesh, roundedBox, textSprite, toon, toonUnique } from '../../vendor/agent-office/client/world/toon';
 import type { DeskView } from '../../vendor/agent-office/client/world/types';
@@ -24,13 +25,17 @@ export interface AreaDef {
   label: string;
   /** Pod columns (x of their centers), west to east; pods fill row by row from the north. */
   columns: readonly number[];
+  /** Which of the four rows (ROWS, north to south) it has: all of them unless it shares its columns. */
+  rows?: readonly number[];
   rug: string;
   sign: string;
 }
 
 export const AREAS: readonly AreaDef[] = [
   { id: 'm5', label: 'M5', columns: [-14.2, -9.2, -4.2], rug: '#d9f0ea', sign: '#1f7a6b' },
-  { id: 'm2max', label: 'M2 Max', columns: [1.8, 6.8], rug: '#e8e0fa', sign: '#6a4fb3' },
+  { id: 'm2max', label: 'M2 Max', columns: [1.8, 6.8], rows: [0, 1, 2], rug: '#e8e0fa', sign: '#6a4fb3' },
+  // The A4000 has few agents: the last row of M2 Max's columns, south of it.
+  { id: 'a4000', label: 'A4000', columns: [1.8, 6.8], rows: [3], rug: '#fde4cc', sign: '#c0662b' },
 ];
 
 /** The plants between the two areas, where M5's last column ends and M2 Max's first begins. */
@@ -67,7 +72,11 @@ export interface Pod {
   desks: DeskView[];
 }
 
-export interface Zone { area: string; tool: ZoneTool; pods: Pod[]; count: number }
+/** A kind's place in an area: whole pods of its own, or (when the area is too small for that) just `desks`, sharing pods with the other kinds. */
+export interface Zone { area: string; tool: ZoneTool; pods: Pod[]; count: number; desks?: DeskView[] }
+
+/** The desks a zone's people sit at. */
+export const zoneDesks = (z: Zone): DeskView[] => z.desks ?? z.pods.flatMap((p) => p.desks);
 export interface AreaSign { area: string; text: string }
 
 export interface Floor {
@@ -91,7 +100,7 @@ export function buildFloor(): Floor {
   let n = 0;
   for (const area of AREAS) {
     const list: Pod[] = [];
-    for (const z of ROWS)
+    for (const z of (area.rows ?? ROWS.map((_, i) => i)).map((i) => ROWS[i]))
       for (const x of area.columns) {
         const g = new THREE.Group();
         g.visible = false;
@@ -132,13 +141,16 @@ export function buildFloor(): Floor {
       group.remove(s);
       disposeSprite(s);
     }
-    const owner = new Map<Pod, ZoneTool>();
-    for (const z of zones) for (const p of z.pods) owner.set(p, z.tool);
+    const shown = new Set<Pod>();
+    const kind = new Map<DeskView, ZoneTool>();
+    for (const z of zones) {
+      for (const p of z.pods) shown.add(p);
+      for (const d of zoneDesks(z)) kind.set(d, z.tool);
+    }
     for (const list of pods.values())
       for (const p of list) {
-        const t = owner.get(p);
-        p.group.visible = !!t;
-        if (t) for (const d of p.desks) paintDesk(d, trim(t));
+        p.group.visible = shown.has(p);
+        if (p.group.visible) for (const d of p.desks) paintDesk(d, trim(kind.get(d) ?? 'free'));
       }
     for (const s of areaSigns) {
       const area = AREAS.find((a) => a.id === s.area);
@@ -146,9 +158,12 @@ export function buildFloor(): Floor {
       const shown = (pods.get(area.id) ?? []).filter((p) => p.group.visible);
       // Over the middle of its first row in use, or of where its first row would be when it has no one.
       const x = (area.columns[0] + area.columns[area.columns.length - 1]) / 2;
-      const z = (shown.length ? Math.min(...shown.map((p) => p.center.z)) : ROWS[0]) - 2.4;
+      // An area below another in the same columns hangs its sign on its south side, clear of the one to its north.
+      const below = !!area.rows?.length && area.rows[0] > 0;
+      const zs = shown.length ? shown.map((p) => p.center.z) : [ROWS[area.rows?.[0] ?? 0]];
+      const z = below ? Math.max(...zs) + 2.6 : Math.min(...zs) - 2.4;
       const sign = textSprite(s.text, { bg: area.sign, color: '#fffaf3', size: 72, border: '#fffaf3' });
-      sign.position.set(x, 3.6, z);
+      sign.position.set(x, below ? 2.6 : 3.6, z);
       group.add(sign);
       signs.push(sign);
     }
@@ -159,6 +174,16 @@ export function buildFloor(): Floor {
 
 /** An area's pods for `count` people of each kind, in the order given and in the area's own fill order; none beyond it. */
 export function allotPods(area: string, available: readonly Pod[], counts: readonly { tool: ZoneTool; count: number }[]): Zone[] {
+  // Too few pods for a pod per kind: everyone shares, kind after kind desk by desk, in as few pods as that takes.
+  if (counts.reduce((n, c) => n + Math.ceil(c.count / PER_POD), 0) > available.length) {
+    const all = available.flatMap((p) => p.desks);
+    let at = 0;
+    return counts.map(({ tool, count }) => {
+      const desks = all.slice(at, at + count);
+      at += desks.length;
+      return { area, tool, count, desks, pods: available.filter((p) => p.desks.some((d) => desks.includes(d))) };
+    });
+  }
   let next = 0;
   return counts.map(({ tool, count }) => {
     const want = Math.ceil(count / PER_POD);
@@ -223,4 +248,58 @@ export function buildLounge(): { group: THREE.Group; spots: THREE.Object3D[] } {
   for (const [x, z] of STANDING_SPOTS) spots.push(facingMiddle(x, 0, z));
   for (const s of spots) if (!s.parent) group.add(s);
   return { group, spots };
+}
+
+/**
+ * The meeting room under the loft (Agent Office's MEETING_ROOM, glass round it, its door facing the lounge
+ * at x 10..11.4): its five-chair table gives way to a long one for twelve, where a lead and the subagents it
+ * called sit together while they work. Chairs come lead first: the west head (by the door), then along the
+ * sides from the west, the east head last, so a second team, filled from the east, gets the far end.
+ */
+export const MEETING = { x: 13.6, z: 10.55, width: 6, depth: 1.5, height: 0.76 } as const;
+/** Just outside the glass door, and just inside it: walks in and out go through these. */
+export const MEETING_DOOR = { out: { x: 10.7, z: 7.3 }, in: { x: 10.7, z: 9 } } as const;
+const SIDE_X = [-2.2, -1.1, 0, 1.1, 2.2];
+const LAPTOP_IN = 0.45;
+
+export interface MeetingChair { group: THREE.Group; seatAnchor: THREE.Object3D; laptopAnchor: THREE.Object3D; head: boolean }
+
+export function buildMeetingTable(): { group: THREE.Group; chairs: MeetingChair[] } {
+  const group = new THREE.Group();
+  const T = MEETING;
+  const table = new THREE.Group();
+  table.add(mesh(roundedBox(T.width, 0.08, T.depth, 0.12), toon(PALETTE.wood), 0, T.height - 0.04, 0));
+  for (const sx of [-1, 0, 1]) {
+    table.add(mesh(new THREE.CylinderGeometry(0.1, 0.12, T.height - 0.08, 10), toon(PALETTE.deskLeg), sx * (T.width / 2 - 0.8), (T.height - 0.08) / 2, 0));
+    table.add(mesh(roundedBox(0.9, 0.05, 0.8, 0.05), toon(PALETTE.deskLeg), sx * (T.width / 2 - 0.8), 0.025, 0));
+  }
+  table.position.set(T.x, 0, T.z);
+  group.add(table);
+  // [x, z, rotY]: each chair's spot on the table's edge (where its laptop goes), its chair 0.85 out from it.
+  const spots: [number, number, number, boolean][] = [[T.x - T.width / 2 + LAPTOP_IN, T.z, -Math.PI / 2, true]];
+  for (const dx of SIDE_X) {
+    spots.push([T.x + dx, T.z - T.depth / 2 + LAPTOP_IN, Math.PI, false]);
+    spots.push([T.x + dx, T.z + T.depth / 2 - LAPTOP_IN, 0, false]);
+  }
+  spots.push([T.x + T.width / 2 - LAPTOP_IN, T.z, Math.PI / 2, true]);
+  const colors = ['#2b2d42', '#ef476f', '#118ab2', '#06d6a0', '#ffd166'];
+  const chairs = spots.map(([x, z, rotY, head], i) => {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY;
+    const laptopAnchor = new THREE.Object3D();
+    laptopAnchor.position.set(0, T.height, 0.07);
+    g.add(laptopAnchor);
+    const seatAnchor = new THREE.Object3D();
+    seatAnchor.position.set(0, 0.4, 0.85);
+    seatAnchor.rotation.y = Math.PI;
+    seatAnchor.scale.setScalar(SEAT_SCALE);
+    g.add(seatAnchor);
+    const ch = chair(colors[i % colors.length]);
+    ch.position.set(0, 0, 0.85);
+    g.add(ch);
+    group.add(g);
+    return { group: g, seatAnchor, laptopAnchor, head };
+  });
+  return { group, chairs };
 }

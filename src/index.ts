@@ -5,6 +5,7 @@ import { machines, startMachines, stopMachines } from "./machines.js";
 import { scanSessions, type ScannedSession } from "./scan.js";
 import { trustFolder } from "./trust.js";
 import { machineStats, startStats, stopStats } from "./stats.js";
+import { herdrAgents, herdrCreate, herdrResume, herdrKeys, herdrPrompt, herdrRead } from "./herdr.js";
 import { closePaseo, paseoAgents, paseoCreate, paseoImport, paseoPermit, paseoSend, paseoSetMode, paseoSetModeAll, paseoStop, paseoTimeline } from "./paseo.js";
 
 // Every open office tab polls this; one reading serves them all for CACHE_MS, and a reading already under
@@ -49,6 +50,12 @@ export default defineFeaturePlugin({
       "remote-machines": () => ({ now: Date.now(), machines: machines() }),
       "machine-stats": () => ({ machines: machineStats() }),
       "trust-folder": async ({ tool, cwd }) => ({ changed: await trustFolder(tool, cwd) }),
+      "herdr-agents": async () => ({ now: Date.now(), hosts: await herdrAgents() }),
+      "herdr-prompt": async ({ hostId, target, text }) => (await herdrPrompt(hostId, target, text), { ok: true }),
+      "herdr-keys": async ({ hostId, target, keys }) => (await herdrKeys(hostId, target, keys), { ok: true }),
+      "herdr-read": async ({ hostId, target, lines }) => ({ text: await herdrRead(hostId, target, lines ?? 40) }),
+      "herdr-create": async (input) => ({ agentId: await herdrCreate(input) }),
+      "herdr-resume": async (input) => ({ agentId: await herdrResume(input) }),
       "paseo-agents": async () => ({ now: Date.now(), hosts: await paseoAgents() }),
       "paseo-timeline": ({ hostId, agentId, limit }) => paseoTimeline(hostId, agentId, limit ?? 60),
       "paseo-send": async ({ hostId, agentId, text, interrupt }) => (await paseoSend(hostId, agentId, text, interrupt ?? false), { ok: true }),

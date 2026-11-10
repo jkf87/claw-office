@@ -6659,7 +6659,17 @@ var LocalSession = typebox_exports.Object({
   /** The session's own title (Claude's custom/ai title, Codex's thread name); empty when it has none. */
   title: typebox_exports.String({ maxLength: 200 }),
   /** Its latest tool calls, oldest first: commands it ran and files it read or changed, never message text. */
-  actions: typebox_exports.Array(typebox_exports.String({ maxLength: 160 }), { maxItems: 12 })
+  actions: typebox_exports.Array(typebox_exports.String({ maxLength: 160 }), { maxItems: 12 }),
+  /** Claude Code subagents it started that are at work or just finished: their task description, never message text. */
+  subagents: typebox_exports.Optional(typebox_exports.Array(typebox_exports.Object({
+    id: typebox_exports.String({ maxLength: 120 }),
+    type: typebox_exports.String({ maxLength: 60 }),
+    description: typebox_exports.String({ maxLength: 120 }),
+    model: typebox_exports.String({ maxLength: 60 }),
+    updatedAt: typebox_exports.Number(),
+    state: typebox_exports.Union([typebox_exports.Literal("working"), typebox_exports.Literal("done"), typebox_exports.Literal("idle")]),
+    actions: typebox_exports.Array(typebox_exports.String({ maxLength: 160 }), { maxItems: 12 })
+  }), { maxItems: 12 }))
 });
 var RemoteAgent = typebox_exports.Object({
   id: typebox_exports.String({ maxLength: 120 }),
@@ -6675,6 +6685,21 @@ var Machine = typebox_exports.Object({
   fetchedAt: typebox_exports.Number(),
   agents: typebox_exports.Array(RemoteAgent, { maxItems: 64 }),
   sessions: typebox_exports.Array(LocalSession, { maxItems: 40 })
+});
+var HerdrHost = typebox_exports.Object({
+  id: typebox_exports.String({ maxLength: 40 }),
+  label: typebox_exports.String({ maxLength: 80 }),
+  machine: typebox_exports.String({ maxLength: 80 }),
+  connected: typebox_exports.Boolean(),
+  error: typebox_exports.String({ maxLength: 240 }),
+  agents: typebox_exports.Array(typebox_exports.Object({
+    target: typebox_exports.String({ maxLength: 120 }),
+    name: typebox_exports.String({ maxLength: 120 }),
+    agent: typebox_exports.String({ maxLength: 40 }),
+    status: typebox_exports.Union([typebox_exports.Literal("idle"), typebox_exports.Literal("working"), typebox_exports.Literal("blocked"), typebox_exports.Literal("done"), typebox_exports.Literal("unknown")]),
+    cwd: typebox_exports.String({ maxLength: 400 }),
+    title: typebox_exports.String({ maxLength: 200 })
+  }), { maxItems: 64 })
 });
 var Gpu = typebox_exports.Object({ name: typebox_exports.String({ maxLength: 120 }), util: typebox_exports.Number(), memUsed: typebox_exports.Number(), memTotal: typebox_exports.Number(), temp: typebox_exports.Number() });
 var MachineStats = typebox_exports.Object({
@@ -6760,6 +6785,54 @@ var contract = defineFeatureContract({
       input: typebox_exports.Object({ tool: typebox_exports.Union([typebox_exports.Literal("claude"), typebox_exports.Literal("codex")]), cwd: typebox_exports.String({ minLength: 1, maxLength: 4096 }) }, { additionalProperties: false }),
       output: typebox_exports.Object({ changed: typebox_exports.Boolean() })
     },
+    "herdr-agents": {
+      kind: "query",
+      description: "Each computer's Herdr agents (Claude Code and Codex in Herdr panes): name, status (idle/working/blocked/done), folder and terminal title.",
+      input: typebox_exports.Object({}, { additionalProperties: false }),
+      output: typebox_exports.Object({ now: typebox_exports.Number(), hosts: typebox_exports.Array(HerdrHost, { maxItems: 8 }) })
+    },
+    "herdr-prompt": {
+      kind: "action",
+      description: "Type a prompt into a Herdr agent and press Enter.",
+      input: typebox_exports.Object({ hostId: typebox_exports.String({ minLength: 1, maxLength: 40 }), target: typebox_exports.String({ minLength: 1, maxLength: 120 }), text: typebox_exports.String({ minLength: 1, maxLength: 2e4 }) }, { additionalProperties: false }),
+      output: typebox_exports.Object({ ok: typebox_exports.Boolean() })
+    },
+    "herdr-keys": {
+      kind: "action",
+      description: "Press keys in a Herdr agent waiting at a question or approval dialog.",
+      input: typebox_exports.Object({ hostId: typebox_exports.String({ minLength: 1, maxLength: 40 }), target: typebox_exports.String({ minLength: 1, maxLength: 120 }), keys: typebox_exports.Array(typebox_exports.String({ minLength: 1, maxLength: 20 }), { minItems: 1, maxItems: 8 }) }, { additionalProperties: false }),
+      output: typebox_exports.Object({ ok: typebox_exports.Boolean() })
+    },
+    "herdr-read": {
+      kind: "query",
+      description: "The last lines of a Herdr agent's terminal, to see what it asks before answering.",
+      input: typebox_exports.Object({ hostId: typebox_exports.String({ minLength: 1, maxLength: 40 }), target: typebox_exports.String({ minLength: 1, maxLength: 120 }), lines: typebox_exports.Optional(typebox_exports.Integer({ minimum: 1, maximum: 200 })) }, { additionalProperties: false }),
+      output: typebox_exports.Object({ text: typebox_exports.String({ maxLength: 16e3 }) })
+    },
+    "herdr-create": {
+      kind: "action",
+      description: "Open a new Herdr tab in a folder on one computer, start Claude Code or Codex there and give it its first prompt.",
+      input: typebox_exports.Object({
+        hostId: typebox_exports.String({ minLength: 1, maxLength: 40 }),
+        provider: Cli,
+        cwd: typebox_exports.String({ minLength: 1, maxLength: 4096 }),
+        prompt: typebox_exports.String({ minLength: 1, maxLength: 2e4 }),
+        title: typebox_exports.Optional(typebox_exports.String({ maxLength: 200 }))
+      }, { additionalProperties: false }),
+      output: typebox_exports.Object({ agentId: typebox_exports.String({ maxLength: 120 }) })
+    },
+    "herdr-resume": {
+      kind: "action",
+      description: "Continue an existing Claude Code or Codex session (by its session id) in a new Herdr tab in its folder.",
+      input: typebox_exports.Object({
+        hostId: typebox_exports.String({ minLength: 1, maxLength: 40 }),
+        provider: Cli,
+        cwd: typebox_exports.String({ minLength: 1, maxLength: 4096 }),
+        sessionId: typebox_exports.String({ minLength: 1, maxLength: 200, pattern: "^[A-Za-z0-9_.:-]+$" }),
+        title: typebox_exports.Optional(typebox_exports.String({ maxLength: 200 }))
+      }, { additionalProperties: false }),
+      output: typebox_exports.Object({ agentId: typebox_exports.String({ maxLength: 120 }) })
+    },
     "paseo-agents": {
       kind: "query",
       description: "Each computer's Paseo agents (Claude Code and Codex sessions Paseo runs): status, title, folder and the permission requests waiting on you.",
@@ -6842,12 +6915,12 @@ var contract = defineFeatureContract({
 import { spawn } from "node:child_process";
 
 // remote:remote-script
-var remote_script_default = '"use strict";var b=require("node:child_process"),A=require("node:os");var u=require("node:fs/promises"),a=require("node:path"),k=3e4,O=10*6e4,P=16,$=96*1024,w=10;async function h(t,n,i){let s;try{s=await(0,u.readdir)(t)}catch{return}for(let e of s){let o=(0,a.join)(t,e);e.endsWith(".jsonl")?i.push(o):n>0&&!e.startsWith(".")&&await h(o,n-1,i)}}async function y(t,n,i,s){let e=[];await h(n,i,e);let o=[];return await Promise.all(e.map(async r=>{try{let d=(await(0,u.stat)(r)).mtimeMs;d>=s&&o.push({id:(0,a.basename)(r,".jsonl").slice(-36),tool:t,file:r,mtime:d})}catch{}})),o.sort((r,d)=>d.mtime-r.mtime).slice(0,P)}var j=/^\\/(private\\/)?(tmp|var\\/folders)\\//;async function S(t,n,i){try{let s=await(0,u.open)(t,"r");try{let e=(await s.stat()).size,o=Math.min(e,n),r=Buffer.alloc(o);return await s.read(r,0,o,i?e-o:0),{text:r.toString("utf8"),cut:e>o}}finally{await s.close()}}catch{return{text:"",cut:!1}}}async function N(t){let n=/"cwd"\\s*:\\s*"([^"]+)"/.exec((await S(t,65536,!1)).text);return n?n[1]:""}async function F(t){let{text:n,cut:i}=await S(t,$,!0),s=n.split(`\n`);return i&&s.shift(),s}var f=t=>typeof t=="string"?(0,a.basename)(t):"",l=t=>typeof t=="string"?t.replace(/\\s+/g," ").trim().slice(0,150):"";function M(t,n){switch(t){case"Bash":return`$ ${l(n.description)||l(n.command)}`;case"Edit":case"MultiEdit":case"Write":case"NotebookEdit":return`\\u270E ${f(n.file_path??n.notebook_path)}`;case"Read":return`\\u25B8 ${f(n.file_path)}`;case"Grep":case"Glob":return`\\u2315 ${l(n.pattern)}`;case"WebFetch":case"WebSearch":return`\\u{1F310} ${l(n.url??n.query)}`;case"Agent":case"Task":return`\\u{1F91D} ${l(n.description)}`;default:return`\\u2022 ${t.includes("__")?t.slice(t.lastIndexOf("__")+2):t}`}}function E(t){let n="",i=[];for(let s of t){if(!s)continue;let e;try{e=JSON.parse(s)}catch{continue}e.type==="custom-title"&&e.customTitle?n=String(e.customTitle):e.type==="ai-title"&&e.aiTitle&&!n&&(n=String(e.aiTitle));let o=e.message?.content;if(e.type==="assistant"&&Array.isArray(o))for(let r of o)r?.type==="tool_use"&&i.push(M(String(r.name),r.input??{}))}return{title:n,actions:i.slice(-w)}}function I(t){let n=typeof t.input=="string"?t.input:typeof t.arguments=="string"?t.arguments:"",i=/\\bcmd"?\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"/.exec(n)??/"command"\\s*:\\s*\\[?\\s*"((?:[^"\\\\]|\\\\.)*)"/.exec(n);return i?`$ ${l(i[1].replace(/\\\\n/g," ").replace(/\\\\"/g,\'"\'))}`:/apply_patch|\\*\\*\\* (Update|Add) File: (\\S+)/.test(n)?`\\u270E ${f(/File: (\\S+)/.exec(n)?.[1])||"patch"}`:`\\u2022 ${l(t.name)||l(n.split(`\n`)[0])}`}function W(t){let n=[];for(let i of t){if(!i.includes(\'_call"\'))continue;let s;try{s=JSON.parse(i)}catch{continue}let e=s.payload;(e?.type==="function_call"||e?.type==="custom_tool_call")&&n.push(I(e))}return{actions:n.slice(-w)}}async function B(t){let n=new Map;try{for(let i of(await(0,u.readFile)((0,a.join)(t,".codex","session_index.jsonl"),"utf8")).split(`\n`))try{let s=JSON.parse(i);s.id&&s.thread_name&&n.set(s.id,String(s.thread_name))}catch{}}catch{}return n}async function _(t,n,i=Date.now()){let s=i-n*36e5,[e,o,r]=await Promise.all([y("claude",(0,a.join)(t,".claude","projects"),1,s),y("codex",(0,a.join)(t,".codex","sessions"),3,s),B(t)]);return(await Promise.all([...e,...o].map(async c=>{let m=await N(c.file);if(j.test(m))return null;let g=await F(c.file),p=c.tool==="claude"?E(g):{title:r.get(c.id)??"",...W(g)};return{id:c.id,cwd:m.slice(0,400),tool:c.tool,project:((0,a.basename)(m)||m).slice(0,200),updatedAt:c.mtime,state:i-c.mtime<k?"working":i-c.mtime<O?"done":"idle",title:p.title.slice(0,200),actions:p.actions}}))).filter(c=>c!==null)}function T(t){try{return JSON.parse((0,b.execFileSync)("openclaw",t,{encoding:"utf8",timeout:25e3,stdio:["ignore","pipe","ignore"],maxBuffer:16*1024*1024}))}catch{return null}}var x=T(["agents","list","--json"]),J=T(["sessions","list","--all-agents","--active","1440","--json","--limit","300"]),v=(J?.sessions??[]).map(t=>{let n=t;return{agentId:n.agentId??"",updatedAt:n.updatedAt??0,key:n.key??""}});_((0,A.homedir)(),6).then(t=>process.stdout.write(JSON.stringify({agents:Array.isArray(x)?x:[],sessions:v,local:t})));\n';
+var remote_script_default = '"use strict";var E=require("node:child_process"),m=require("node:fs"),S=require("node:os"),f=require("node:path");var d=require("node:fs/promises"),l=require("node:path"),A=3e4,k=10*6e4,W=16,J=96*1024,P=10;async function T(t,n,e){let i;try{i=await(0,d.readdir)(t)}catch{return}for(let o of i){let c=(0,l.join)(t,o);o.endsWith(".jsonl")?e.push(c):n>0&&!o.startsWith(".")&&await T(c,n-1,e)}}async function x(t,n,e,i){let o=[];await T(n,e,o);let c=[];return await Promise.all(o.map(async s=>{try{let a=(await(0,d.stat)(s)).mtimeMs;a>=i&&c.push({id:(0,l.basename)(s,".jsonl").slice(-36),tool:t,file:s,mtime:a})}catch{}})),c.sort((s,a)=>a.mtime-s.mtime).slice(0,W)}var D=/^\\/(private\\/)?(tmp|var\\/folders)\\//;async function j(t,n,e){try{let i=await(0,d.open)(t,"r");try{let o=(await i.stat()).size,c=Math.min(o,n),s=Buffer.alloc(c);return await i.read(s,0,c,e?o-c:0),{text:s.toString("utf8"),cut:o>c}}finally{await i.close()}}catch{return{text:"",cut:!1}}}async function R(t){let n=/"cwd"\\s*:\\s*"([^"]+)"/.exec((await j(t,65536,!1)).text);return n?n[1]:""}async function O(t){let{text:n,cut:e}=await j(t,J,!0),i=n.split(`\n`);return e&&i.shift(),i}var h=t=>typeof t=="string"?(0,l.basename)(t):"",g=t=>typeof t=="string"?t.replace(/\\s+/g," ").trim().slice(0,150):"";function v(t,n){switch(t){case"Bash":return`$ ${g(n.description)||g(n.command)}`;case"Edit":case"MultiEdit":case"Write":case"NotebookEdit":return`\\u270E ${h(n.file_path??n.notebook_path)}`;case"Read":return`\\u25B8 ${h(n.file_path)}`;case"Grep":case"Glob":return`\\u2315 ${g(n.pattern)}`;case"WebFetch":case"WebSearch":return`\\u{1F310} ${g(n.url??n.query)}`;case"Agent":case"Task":return`\\u{1F91D} ${g(n.description)}`;default:return`\\u2022 ${t.includes("__")?t.slice(t.lastIndexOf("__")+2):t}`}}function $(t){let n="",e=[];for(let i of t){if(!i)continue;let o;try{o=JSON.parse(i)}catch{continue}o.type==="custom-title"&&o.customTitle?n=String(o.customTitle):o.type==="ai-title"&&o.aiTitle&&!n&&(n=String(o.aiTitle));let c=o.message?.content;if(o.type==="assistant"&&Array.isArray(c))for(let s of c)s?.type==="tool_use"&&e.push(v(String(s.name),s.input??{}))}return{title:n,actions:e.slice(-P)}}function C(t){let n=typeof t.input=="string"?t.input:typeof t.arguments=="string"?t.arguments:"",e=/\\bcmd"?\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"/.exec(n)??/"command"\\s*:\\s*\\[?\\s*"((?:[^"\\\\]|\\\\.)*)"/.exec(n);return e?`$ ${g(e[1].replace(/\\\\n/g," ").replace(/\\\\"/g,\'"\'))}`:/apply_patch|\\*\\*\\* (Update|Add) File: (\\S+)/.test(n)?`\\u270E ${h(/File: (\\S+)/.exec(n)?.[1])||"patch"}`:`\\u2022 ${g(t.name)||g(n.split(`\n`)[0])}`}function G(t){let n=[];for(let e of t){if(!e.includes(\'_call"\'))continue;let i;try{i=JSON.parse(e)}catch{continue}let o=i.payload;(o?.type==="function_call"||o?.type==="custom_tool_call")&&n.push(C(o))}return{actions:n.slice(-P)}}async function L(t){let n=new Map;try{for(let e of(await(0,d.readFile)((0,l.join)(t,".codex","session_index.jsonl"),"utf8")).split(`\n`))try{let i=JSON.parse(e);i.id&&i.thread_name&&n.set(i.id,String(i.thread_name))}catch{}}catch{}return n}var U=12,z=30*6e4;async function q(t,n){let e=(0,l.join)(t.slice(0,-6),"subagents"),i;try{i=await(0,d.readdir)(e)}catch{return[]}let c=(await Promise.all(i.filter(s=>s.endsWith(".meta.json")).map(async s=>{let a=s.slice(0,-10);try{let r=JSON.parse(await(0,d.readFile)((0,l.join)(e,s),"utf8")),u=(0,l.join)(e,`${a}.jsonl`),p=(await(0,d.stat)(u).catch(()=>(0,d.stat)((0,l.join)(e,s)))).mtimeMs,y=r.finished===!0,w=n-p;return(y?w>=k:w>=z)?null:{id:a.replace(/^agent-/,"").slice(0,120),type:String(r.agentType??"").slice(0,60),description:g(r.description).slice(0,120),model:String(r.pickedEffortModel??r.model??"").slice(0,60),updatedAt:p,state:y?"done":w<A*4?"working":"idle",actions:[]}}catch{return null}}))).filter(s=>s!==null).sort((s,a)=>a.updatedAt-s.updatedAt).slice(0,U);return await Promise.all(c.filter(s=>s.state==="working").map(async s=>{s.actions=$(await O((0,l.join)(e,`agent-${s.id}.jsonl`))).actions})),c}async function M(t,n,e=Date.now()){let i=e-n*36e5,[o,c,s]=await Promise.all([x("claude",(0,l.join)(t,".claude","projects"),1,i),x("codex",(0,l.join)(t,".codex","sessions"),3,i),L(t)]);return(await Promise.all([...o,...c].map(async r=>{let u=await R(r.file);if(D.test(u))return null;let p=await O(r.file),y=r.tool==="claude"?$(p):{title:s.get(r.id)??"",...G(p)};return{id:r.id,cwd:u.slice(0,400),tool:r.tool,project:((0,l.basename)(u)||u).slice(0,200),updatedAt:r.mtime,state:e-r.mtime<A?"working":e-r.mtime<k?"done":"idle",title:y.title.slice(0,200),actions:y.actions,subagents:r.tool==="claude"?await q(r.file,e):[]}}))).filter(r=>r!==null)}function F(t){try{return JSON.parse((0,E.execFileSync)("openclaw",t,{encoding:"utf8",timeout:25e3,stdio:["ignore","pipe","ignore"],maxBuffer:16*1024*1024}))}catch{return null}}function K(){if(process.platform!=="win32")return[(0,S.homedir)()];let t=(0,f.join)((0,S.homedir)(),".."),n=new Set([(0,S.homedir)()]);try{for(let e of(0,m.readdirSync)(t)){let i=(0,f.join)(t,e);[".claude",".codex",".openclaw"].some(o=>(0,m.existsSync)((0,f.join)(i,o)))&&n.add(i)}}catch{}return[...n]}var N=t=>{try{return(0,m.statSync)(t).mtimeMs}catch{return 0}};function Y(t){let n=[],e=[];for(let i of t){let o=(0,f.join)(i,".openclaw","agents"),c=[];try{c=(0,m.readdirSync)(o).filter(s=>(0,m.statSync)((0,f.join)(o,s)).isDirectory())}catch{continue}for(let s of c){if(n.some(u=>u.id===s))continue;n.push({id:s});let a=(0,f.join)(o,s,"sessions"),r=N(a);try{for(let u of(0,m.readdirSync)(a))u.includes(".deleted.")||(r=Math.max(r,N((0,f.join)(a,u))))}catch{}r>Date.now()-864e5&&e.push({agentId:s,updatedAt:r,key:`${s}:folder`})}}return{agents:n,sessions:e}}var I=K(),B=F(["agents","list","--json"]),_=Array.isArray(B),H=_?F(["sessions","list","--all-agents","--active","1440","--json","--limit","300"]):null,b=_?null:Y(I),Q=b?b.sessions:(H?.sessions??[]).map(t=>{let n=t;return{agentId:n.agentId??"",updatedAt:n.updatedAt??0,key:n.key??""}});Promise.all(I.map(t=>M(t,6).catch(()=>[]))).then(t=>{let n=t.flat().sort((e,i)=>i.updatedAt-e.updatedAt);process.stdout.write(JSON.stringify({agents:_?B:b?.agents??[],sessions:Q,local:n}))});\n';
 
 // src/machines.ts
 var MACHINES = [
   { id: "m2max", label: "M2 Max", ssh: "computer-c", shell: "zsh" },
-  { id: "a4000", label: "A4000", ssh: "a4000-wsl", shell: "bash", probeOnly: true }
+  { id: "a4000", label: "A4000", ssh: "a4000-wsl", shell: "bash", node: `cd /mnt/c && '/mnt/c/Program Files/nodejs/node.exe' -` }
 ];
 var REFRESH_MS = 3e4;
 var TIMEOUT_MS = 45e3;
@@ -6857,24 +6930,30 @@ var children = /* @__PURE__ */ new Set();
 var stopped = false;
 function run(def, input2) {
   return new Promise((resolve, reject) => {
-    const cmd = input2 === null ? "echo ok" : `${def.shell} -lc 'node -'`;
+    const cmd = input2 === null ? "echo ok" : def.node ?? `${def.shell} -lc 'node -'`;
     if (stopped) return reject(new Error("stopped"));
     const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", def.ssh, cmd], { stdio: ["pipe", "pipe", "pipe"] });
     children.add(child);
     child.on("exit", () => children.delete(child));
     let out = "";
     let err = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
+    let settled = false;
+    const settle2 = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      children.delete(child);
+      fn();
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      settle2(() => reject(new Error("ssh timed out")));
+    }, TIMEOUT_MS);
     child.stdout.on("data", (d) => out += d);
     child.stderr.on("data", (d) => err += d);
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve(out);
-      else reject(new Error(err.trim().split("\n").pop() || `ssh exited ${code}`));
+    child.on("error", (e) => settle2(() => reject(e)));
+    child.on("close", (code) => settle2(() => code === 0 ? resolve(out) : reject(new Error(err.trim().split("\n").pop() || `ssh exited ${code}`))));
+    child.stdin.on("error", () => {
     });
     child.stdin.end(input2 ?? "");
   });
@@ -7066,6 +7145,44 @@ async function codexTitles(home) {
   }
   return titles;
 }
+var SUBS_PER_SESSION = 12;
+var SUB_STALE_MS = 30 * 6e4;
+async function subagentsOf(sessionFile, now) {
+  const dir = join(sessionFile.slice(0, -".jsonl".length), "subagents");
+  let names;
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const rows = await Promise.all(names.filter((n) => n.endsWith(".meta.json")).map(async (n) => {
+    const base = n.slice(0, -".meta.json".length);
+    try {
+      const meta3 = JSON.parse(await readFile(join(dir, n), "utf8"));
+      const log = join(dir, `${base}.jsonl`);
+      const mtime = (await stat(log).catch(() => stat(join(dir, n)))).mtimeMs;
+      const finished = meta3.finished === true;
+      const age = now - mtime;
+      if (finished ? age >= DONE_MS : age >= SUB_STALE_MS) return null;
+      return {
+        id: base.replace(/^agent-/, "").slice(0, 120),
+        type: String(meta3.agentType ?? "").slice(0, 60),
+        description: one(meta3.description).slice(0, 120),
+        model: String(meta3.pickedEffortModel ?? meta3.model ?? "").slice(0, 60),
+        updatedAt: mtime,
+        state: finished ? "done" : age < WORKING_MS * 4 ? "working" : "idle",
+        actions: []
+      };
+    } catch {
+      return null;
+    }
+  }));
+  const subs = rows.filter((r) => r !== null).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, SUBS_PER_SESSION);
+  await Promise.all(subs.filter((x) => x.state === "working").map(async (x) => {
+    x.actions = claudeBrief(await tail(join(dir, `agent-${x.id}.jsonl`))).actions;
+  }));
+  return subs;
+}
 async function scanSessions(home, hours, now = Date.now()) {
   const since = now - hours * 36e5;
   const [claude, codex, codexNames] = await Promise.all([
@@ -7086,7 +7203,8 @@ async function scanSessions(home, hours, now = Date.now()) {
       updatedAt: f.mtime,
       state: now - f.mtime < WORKING_MS ? "working" : now - f.mtime < DONE_MS ? "done" : "idle",
       title: brief.title.slice(0, 200),
-      actions: brief.actions
+      actions: brief.actions,
+      subagents: f.tool === "claude" ? await subagentsOf(f.file, now) : []
     };
   }));
   return rows.filter((r) => r !== null);
@@ -7151,7 +7269,14 @@ var stopped2 = false;
 function run2(cmd, args) {
   return new Promise((resolve, reject) => {
     if (stopped2) return reject(new Error("stopped"));
-    const child = execFile(cmd, args, { timeout: TIMEOUT_MS2, maxBuffer: 1 << 20 }, (err, out) => err ? reject(err) : resolve(String(out)));
+    const guard = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`${cmd} timed out`));
+    }, TIMEOUT_MS2 + 2e3);
+    const child = execFile(cmd, args, { timeout: TIMEOUT_MS2, maxBuffer: 1 << 20 }, (err, out) => {
+      clearTimeout(guard);
+      err ? reject(err) : resolve(String(out));
+    });
     children2.add(child);
     child.on("exit", () => children2.delete(child));
   });
@@ -7164,17 +7289,22 @@ function ssh(host, command) {
     child.on("exit", () => children2.delete(child));
     let out = "";
     let err = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS2);
+    let settled = false;
+    const settle2 = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      children2.delete(child);
+      fn();
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      settle2(() => reject(new Error("ssh timed out")));
+    }, TIMEOUT_MS2);
     child.stdout.on("data", (d) => out += d);
     child.stderr.on("data", (d) => err += d);
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      code === 0 ? resolve(out) : reject(new Error(err.trim().split("\n").pop() || `ssh exited ${code}`));
-    });
+    child.on("error", (e) => settle2(() => reject(e)));
+    child.on("close", (code) => settle2(() => code === 0 ? resolve(out) : reject(new Error(err.trim().split("\n").pop() || `ssh exited ${code}`))));
   });
 }
 function macMemUsed(vmStat, total) {
@@ -7293,6 +7423,96 @@ function machineStats(now = Date.now()) {
     if (!stopped2 && (!r || now - r.at > REFRESH_MS2)) void refresh2(src);
     return r ?? { id: src.id, label: src.label, ok: false, error: "\uC77D\uB294 \uC911", at: 0, cores: 0, cpu: -1, memUsed: 0, memTotal: 0, diskUsed: 0, diskTotal: 0, uptime: -1, gpu: null };
   });
+}
+
+// src/herdr.ts
+import { execFile as execFile2 } from "node:child_process";
+var LOCAL = { id: "m5", label: "M5" };
+var TIMEOUT_MS3 = 8e3;
+var CACHE_MS = 2e3;
+function herdr(args, timeout = TIMEOUT_MS3) {
+  return new Promise((resolve, reject) => {
+    const guard = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("herdr timed out"));
+    }, timeout + 2e3);
+    const child = execFile2("herdr", args, { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      clearTimeout(guard);
+      if (err) reject(new Error((stderr || err.message).trim().split("\n").pop() || "herdr failed"));
+      else resolve(stdout);
+    });
+  });
+}
+var on = (machine) => machine ? ["--machine", machine] : [];
+async function hosts() {
+  const rows = (await herdr(["machine", "list"]).catch(() => "")).split("\n").map((l) => l.split("	")).filter((c) => c.length >= 5 && c[4] === "enabled");
+  return [{ ...LOCAL, machine: "" }, ...rows.map((c) => ({ id: c[1].toLowerCase(), label: c[1], machine: c[1] }))];
+}
+var STATUSES = ["idle", "working", "blocked", "done", "unknown"];
+async function readHost(h) {
+  try {
+    const out = JSON.parse(await herdr([...on(h.machine), "agent", "list"]));
+    const agents = (out?.result?.agents ?? []).map((a) => ({
+      target: String(a.name || a.pane_id).slice(0, 120),
+      name: String(a.name ?? "").slice(0, 120),
+      agent: String(a.agent ?? "").slice(0, 40),
+      status: STATUSES.includes(a.agent_status) ? a.agent_status : "unknown",
+      cwd: String(a.foreground_cwd || a.cwd || "").slice(0, 400),
+      title: String(a.terminal_title_stripped ?? "").slice(0, 200)
+    }));
+    return { ...h, connected: true, error: "", agents };
+  } catch (e) {
+    return { ...h, connected: false, error: String(e?.message ?? e).slice(0, 240), agents: [] };
+  }
+}
+var cached = null;
+var reading = null;
+async function herdrAgents(now = Date.now()) {
+  if (cached && now - cached.at <= CACHE_MS) return cached.hosts;
+  reading ??= hosts().then((hs) => Promise.all(hs.map(readHost))).then((r) => {
+    cached = { at: Date.now(), hosts: r };
+    return r;
+  }).finally(() => reading = null);
+  return reading;
+}
+function machineOf(hostId) {
+  if (hostId === LOCAL.id) return "";
+  const h = cached?.hosts.find((x) => x.id === hostId);
+  if (!h) throw new Error(`herdr\uC5D0 ${hostId} \uCEF4\uD4E8\uD130\uAC00 \uC5C6\uC5B4\uC694`);
+  return h.machine;
+}
+async function herdrPrompt(hostId, target, text) {
+  await herdr([...on(machineOf(hostId)), "agent", "prompt", target, text]);
+  cached = null;
+}
+async function herdrKeys(hostId, target, keys) {
+  await herdr([...on(machineOf(hostId)), "agent", "send-keys", target, ...keys]);
+  cached = null;
+}
+async function herdrRead(hostId, target, lines = 40) {
+  return (await herdr([...on(machineOf(hostId)), "agent", "read", target, "--source", "recent", "--lines", String(lines)])).slice(-16e3);
+}
+async function startInTab(hostId, provider, cwd, title, args) {
+  if (!cached) await herdrAgents();
+  const m = on(machineOf(hostId));
+  const label = (title || cwd.split("/").pop() || provider).slice(0, 40);
+  const tab = JSON.parse(await herdr([...m, "tab", "create", "--cwd", cwd, "--label", label]));
+  const pane = tab?.result?.root_pane?.pane_id;
+  if (!pane) throw new Error("herdr\uAC00 \uC0C8 \uD0ED\uC744 \uB9CC\uB4E4\uC9C0 \uBABB\uD588\uC5B4\uC694");
+  const slug = label.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^[^a-z]+|-+$/g, "").slice(0, 24) || provider;
+  const name = `${slug}-${Date.now().toString(36).slice(-4)}`;
+  await herdr([...m, "agent", "start", name, "--kind", provider, "--pane", pane, ...args.length ? ["--", ...args] : []], 6e4);
+  cached = null;
+  return { m, name };
+}
+async function herdrCreate(input2) {
+  const { m, name } = await startInTab(input2.hostId, input2.provider, input2.cwd, input2.title, []);
+  await herdr([...m, "agent", "prompt", name, input2.prompt]);
+  return name;
+}
+async function herdrResume(input2) {
+  const args = input2.provider === "claude" ? ["--resume", input2.sessionId] : ["resume", input2.sessionId];
+  return (await startInTab(input2.hostId, input2.provider, input2.cwd, input2.title, args)).name;
 }
 
 // src/paseo.ts
@@ -7936,7 +8156,7 @@ __export(util_exports, {
   attachSchema: () => attachSchema,
   base64ToUint8Array: () => base64ToUint8Array,
   base64urlToUint8Array: () => base64urlToUint8Array,
-  cached: () => cached,
+  cached: () => cached2,
   captureStackTrace: () => captureStackTrace,
   cleanEnum: () => cleanEnum,
   cleanRegex: () => cleanRegex,
@@ -8040,7 +8260,7 @@ var Cached = class {
     return this._value;
   }
 };
-function cached(getter) {
+function cached2(getter) {
   return new Cached(getter);
 }
 function nullish(input2) {
@@ -8189,7 +8409,7 @@ var captureStackTrace = "captureStackTrace" in Error ? Error.captureStackTrace :
 function isObject(data) {
   return typeof data === "object" && data !== null && !Array.isArray(data);
 }
-var allowsEval = /* @__PURE__ */ cached(() => {
+var allowsEval = /* @__PURE__ */ cached2(() => {
   if (globalConfig.jitless) {
     return false;
   }
@@ -10843,7 +11063,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     get.raw = sh;
     Object.defineProperty(def, "shape", { get });
   }
-  const _normalized = cached(() => normalizeDef(def));
+  const _normalized = cached2(() => normalizeDef(def));
   defineLazyInternal(inst, "propValues", (zod) => {
     const shape = zod.def.shape;
     const propValues = {};
@@ -10910,7 +11130,7 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
 var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) => {
   $ZodObject.init(inst, def);
   const superParse = inst._zod.parse;
-  const _normalized = cached(() => normalizeDef(def));
+  const _normalized = cached2(() => normalizeDef(def));
   const memo2 = globalConfig.memoizer;
   const generateFastpass = (shape) => {
     const normalized = _normalized.value;
@@ -11219,7 +11439,7 @@ var $ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("$ZodDiscriminatedUnio
       throw new Error(`Invalid discriminated union option at index "${i}"`);
     }
   });
-  const disc = cached(() => discriminatorMap(def));
+  const disc = cached2(() => discriminatorMap(def));
   inst._zod.parse = (payload, ctx) => {
     const input2 = payload.value;
     if (!isObject(input2)) {
@@ -12365,9 +12585,9 @@ var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
 function isRecursive(inst, stack, resolve) {
-  const cached4 = recursive.get(inst);
-  if (cached4 !== void 0)
-    return cached4 ? PROVEN : NONE;
+  const cached5 = recursive.get(inst);
+  if (cached5 !== void 0)
+    return cached5 ? PROVEN : NONE;
   if (stack.has(inst))
     return PROVEN;
   stack.add(inst);
@@ -26793,15 +27013,15 @@ function visit(schema, fnOrHandlers) {
   };
   const cache = /* @__PURE__ */ new Map();
   function run3(s) {
-    const cached4 = cache.get(s);
-    if (cached4 === RESOLVING) {
+    const cached5 = cache.get(s);
+    if (cached5 === RESOLVING) {
       return new $ZodLazy({
         type: "lazy",
         getter: () => cache.get(s)
       });
     }
-    if (cached4 !== void 0)
-      return cached4;
+    if (cached5 !== void 0)
+      return cached5;
     cache.set(s, RESOLVING);
     const inner = mapInner(s);
     const mapped = fn(inner, inner !== s);
@@ -142094,18 +142314,18 @@ function resolveAgentConfig(options) {
 // src/paseo.ts
 var CONFIG = join3(homedir2(), ".claw-office", "paseo.json");
 var DEFAULT_HOSTS = [{ id: "m5", label: "M5", url: "ws://127.0.0.1:6767/ws" }];
-var CACHE_MS = 1500;
+var CACHE_MS2 = 1500;
 var CONNECT_TIMEOUT_MS = 6e3;
 var AGENT_LIMIT = 60;
 function hostsFromConfig() {
   try {
     const raw = JSON.parse(readFileSync(CONFIG, "utf8"));
-    const hosts = (Array.isArray(raw.hosts) ? raw.hosts : []).flatMap((h) => {
+    const hosts2 = (Array.isArray(raw.hosts) ? raw.hosts : []).flatMap((h) => {
       const r = h;
       if (typeof r.id !== "string" || typeof r.url !== "string" || !/^wss?:\/\//.test(r.url)) return [];
       return [{ id: r.id.slice(0, 40), label: String(r.label ?? r.id).slice(0, 80), url: r.url, ...typeof r.password === "string" && r.password ? { password: r.password } : {} }];
     });
-    return hosts.length ? hosts.slice(0, 8) : DEFAULT_HOSTS;
+    return hosts2.length ? hosts2.slice(0, 8) : DEFAULT_HOSTS;
   } catch {
     return DEFAULT_HOSTS;
   }
@@ -142155,7 +142375,7 @@ function hostDef(hostId) {
 async function closePaseo() {
   const all = [...conns.values()];
   conns.clear();
-  cached2 = null;
+  cached3 = null;
   await Promise.allSettled(all.map((c) => c.client.close()));
 }
 var one2 = (text, max = 160) => typeof text === "string" ? text.replace(/\s+/g, " ").trim().slice(0, max) : "";
@@ -142216,7 +142436,7 @@ function agentRow(a) {
     modes: (a.availableModes ?? []).slice(0, 12).map((m) => ({ id: String(m.id).slice(0, 80), label: String(m.label ?? m.id).slice(0, 80) }))
   };
 }
-async function readHost(def) {
+async function readHost2(def) {
   try {
     const client = await connected(def);
     const r = await client.fetchAgents({ sort: [{ key: "updated_at", direction: "desc" }], page: { limit: AGENT_LIMIT } });
@@ -142226,17 +142446,17 @@ async function readHost(def) {
     return { id: def.id, label: def.label, connected: false, error: conns.get(def.id)?.error || message(e), agents: [] };
   }
 }
-var cached2 = null;
-var reading = null;
+var cached3 = null;
+var reading2 = null;
 async function paseoAgents(now = Date.now()) {
-  if (cached2 && now - cached2.at <= CACHE_MS) return cached2.hosts;
-  reading ??= Promise.all(hostsFromConfig().map(readHost)).then((hosts) => {
-    cached2 = { at: Date.now(), hosts };
-    return hosts;
-  }).finally(() => reading = null);
-  return reading;
+  if (cached3 && now - cached3.at <= CACHE_MS2) return cached3.hosts;
+  reading2 ??= Promise.all(hostsFromConfig().map(readHost2)).then((hosts2) => {
+    cached3 = { at: Date.now(), hosts: hosts2 };
+    return hosts2;
+  }).finally(() => reading2 = null);
+  return reading2;
 }
-var forget = () => cached2 = null;
+var forget = () => cached3 = null;
 function timelineItem(e) {
   const at = Date.parse(e.timestamp) || 0;
   const it = e.item;
@@ -142336,16 +142556,16 @@ async function paseoImport(input2) {
 }
 
 // src/index.ts
-var CACHE_MS2 = 9e3;
-var cached3 = null;
-var reading2 = null;
+var CACHE_MS3 = 9e3;
+var cached4 = null;
+var reading3 = null;
 async function sessionsFor(hours, now) {
-  if (cached3 && cached3.hours === hours && now - cached3.at <= CACHE_MS2) return cached3.sessions;
-  reading2 ??= scanSessions(homedir3(), hours, now).then((sessions) => {
-    cached3 = { hours, at: now, sessions };
+  if (cached4 && cached4.hours === hours && now - cached4.at <= CACHE_MS3) return cached4.sessions;
+  reading3 ??= scanSessions(homedir3(), hours, now).then((sessions) => {
+    cached4 = { hours, at: now, sessions };
     return sessions;
-  }).finally(() => reading2 = null);
-  return reading2;
+  }).finally(() => reading3 = null);
+  return reading3;
 }
 var index_default = defineFeaturePlugin({
   contract,
@@ -142372,6 +142592,12 @@ var index_default = defineFeaturePlugin({
       "remote-machines": () => ({ now: Date.now(), machines: machines() }),
       "machine-stats": () => ({ machines: machineStats() }),
       "trust-folder": async ({ tool, cwd }) => ({ changed: await trustFolder(tool, cwd) }),
+      "herdr-agents": async () => ({ now: Date.now(), hosts: await herdrAgents() }),
+      "herdr-prompt": async ({ hostId, target, text }) => (await herdrPrompt(hostId, target, text), { ok: true }),
+      "herdr-keys": async ({ hostId, target, keys }) => (await herdrKeys(hostId, target, keys), { ok: true }),
+      "herdr-read": async ({ hostId, target, lines }) => ({ text: await herdrRead(hostId, target, lines ?? 40) }),
+      "herdr-create": async (input2) => ({ agentId: await herdrCreate(input2) }),
+      "herdr-resume": async (input2) => ({ agentId: await herdrResume(input2) }),
       "paseo-agents": async () => ({ now: Date.now(), hosts: await paseoAgents() }),
       "paseo-timeline": ({ hostId, agentId, limit }) => paseoTimeline(hostId, agentId, limit ?? 60),
       "paseo-send": async ({ hostId, agentId, text, interrupt }) => (await paseoSend(hostId, agentId, text, interrupt ?? false), { ok: true }),
