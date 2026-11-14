@@ -209,30 +209,56 @@ type HerdrHost = FeatureOutput<typeof contract, "herdr-agents">["hosts"][number]
 const HERDR_POLL_MS = 3_000;
 const HERDR_STATUS: Record<HerdrHost["agents"][number]["status"], WorkerStatus> = { blocked: "needs_input", working: "working", done: "done", idle: "idle", unknown: "idle" };
 
+/** A terminal title with Claude Code's spinner or status mark taken off; "" when it says no more than which CLI it is. */
+function paneTitle(t: string): string {
+  const s = t.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+  return /^(claude( code)?|codex)$/i.test(s) ? "" : s;
+}
+
 /** Claude Code and Codex agents in one computer's Herdr panes, red-lit while one waits at a question or approval.
- * Herdr gives no session id, so each takes the newest unclaimed log of the same tool in the same folder for its
- * title, tool calls and subagents; the logs it took don't get desks of their own. */
+ * Herdr gives no session id, so each pane is matched to its session's log for the tool calls and subagents:
+ * by the title Claude Code puts on its terminal (the session's own title), among the logs of the same tool in
+ * the same folder. A pane whose title matches no log takes one only when it's the folder's last unmatched pane
+ * and there's just one unmatched log left there; otherwise it shows its own title and no log (never a guess:
+ * a wrong log would put another session's name on the desk you click). The logs taken get no desks of their own. */
 function herdrSeats(host: HerdrHost, logs: readonly LocalSession[], now: number): { seats: Seat[]; logs: LocalSession[] } {
   const free = [...logs].sort((a, b) => b.updatedAt - a.updatedAt);
+  const panes = host.agents.filter((a) => a.agent === "claude" || a.agent === "codex");
+  const tool = (a: HerdrHost["agents"][number]) => a.agent as "claude" | "codex";
+  const take = (i: number) => (i >= 0 ? free.splice(i, 1)[0] : undefined);
+  const logOf = new Map<string, LocalSession>();
+  for (const a of panes) {
+    const t = paneTitle(a.title);
+    if (!t) continue;
+    const log = take(free.findIndex((l) => l.tool === tool(a) && l.cwd === a.cwd && paneTitle(l.title) === t));
+    if (log) logOf.set(a.target, log);
+  }
+  for (const a of panes) {
+    if (logOf.has(a.target)) continue;
+    const others = panes.filter((b) => b !== a && !logOf.has(b.target) && tool(b) === tool(a) && b.cwd === a.cwd);
+    const left = free.filter((l) => l.tool === tool(a) && l.cwd === a.cwd);
+    if (others.length || left.length !== 1) continue;
+    logOf.set(a.target, take(free.indexOf(left[0]))!);
+  }
   const perProject = new Map<string, number>();
-  const seats = host.agents.filter((a) => a.agent === "claude" || a.agent === "codex").flatMap((a) => {
-    const tool = a.agent as "claude" | "codex";
-    const i = free.findIndex((l) => l.tool === tool && l.cwd === a.cwd);
-    const log = i >= 0 ? free.splice(i, 1)[0] : undefined;
-    const base = a.name || (a.cwd.split("/").pop() ?? tool);
-    const n = (perProject.get(`${tool}:${base}`) ?? 0) + 1;
-    perProject.set(`${tool}:${base}`, n);
+  const seats = panes.flatMap((a) => {
+    const t = tool(a);
+    const log = logOf.get(a.target);
+    const base = a.name || (a.cwd.split("/").pop() ?? t);
+    const n = (perProject.get(`${t}:${base}`) ?? 0) + 1;
+    perProject.set(`${t}:${base}`, n);
     const name = n > 1 ? `${base} ${n}` : base;
+    const title = paneTitle(a.title) || log?.title || "";
     const seat: Seat = {
       key: `herdr:${host.id}:${a.target}`,
       machine: host.id,
-      tool,
+      tool: t,
       name,
-      color: TOOL_COLORS[tool],
+      color: TOOL_COLORS[t],
       status: HERDR_STATUS[a.status],
-      card: `${tool === "claude" ? "Claude Code" : "Codex"} · ${a.cwd.split("/").pop() || tool} · Herdr`,
+      card: `${t === "claude" ? "Claude Code" : "Codex"} · ${a.cwd.split("/").pop() || t} · Herdr`,
       screen: [`Herdr ${a.target}`, `폴더 ${a.cwd.split("/").pop() || "?"}`, log ? `기록 ${ago(now - log.updatedAt)}` : "기록 없음"],
-      brief: a.status === "blocked" ? `확인 기다림: ${log?.title || a.title}` : log?.title || a.title,
+      brief: a.status === "blocked" ? `확인 기다림: ${title || "Herdr 칸"}` : title,
       actions: log?.actions ?? [],
       at: log?.updatedAt,
       live: true,

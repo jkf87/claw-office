@@ -26,10 +26,10 @@ export function isClaudeModel(value: unknown): value is ClaudeModel {
  * session reports instead (see claudeModelName).
  */
 export const CLAUDE_MODEL_NAMES: Record<ClaudeModel, string> = {
-  fable: 'Fable 5.1',
+  fable: 'Fable 5.2',
   opus: 'Opus 5.5',
   sonnet: 'Sonnet 5.5',
-  haiku: 'Haiku 4.5',
+  haiku: 'Haiku 5.5',
 };
 
 /**
