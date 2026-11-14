@@ -123,7 +123,8 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
   who.setAttribute("aria-label", "맡을 에이전트");
   const whoNote = el("p", "claw-office-assign-note");
   const what = el("textarea", "claw-office-assign-what");
-  what.placeholder = "무엇을 해 주면 될까요? 예: drafts/gpu-how-it-works 기획안의 목차를 5개 장으로 다시 짜 줘";
+  const PLACEHOLDER = "무엇을 해 주면 될까요? 예: drafts/gpu-how-it-works 기획안의 목차를 5개 장으로 다시 짜 줘";
+  what.placeholder = PLACEHOLDER;
   what.rows = 4;
   what.required = true;
   what.setAttribute("aria-label", "무엇을");
@@ -159,7 +160,11 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
   const add = el("button", "claw-office-assign-open", "＋ 일 맡기기");
   add.type = "button";
   const bar = el("div", "claw-office-deskbar");
-  bar.append(add, bell);
+  const fresh = el("button", "claw-office-assign-open", "＋ 새 Claude Code");
+  fresh.type = "button";
+  fresh.title = "Herdr로 이 컴퓨터에 Claude Code 세션을 새로 열어요 (OpenClaw 에이전트를 거치지 않아요)";
+  fresh.hidden = true;
+  bar.append(add, fresh, bell);
   root.append(bar, inbox, veil, toast);
 
   const close = () => (veil.hidden = true);
@@ -170,6 +175,11 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
     const a = choices().find((x) => x.id === who.value);
     cwdLabel.hidden = !a?.paseo;
     tui.hidden = !onTerminal || !!a?.paseo;
+    // A new Claude Code / Codex in Herdr can open empty, for you to talk to it there yourself.
+    const blank = a?.paseo?.via === "herdr";
+    what.required = !blank;
+    what.placeholder = blank ? "첫 지시 (비워 두면 빈 세션으로 열어요)" : PLACEHOLDER;
+    send.textContent = blank && !what.value.trim() ? "새 세션 열기" : "맡기기";
     if (a?.paseo) {
       if (!cwdField.value && defaultCwd) cwdField.value = defaultCwd;
       whoNote.textContent = a.paseo.via === "herdr" ? `Herdr가 이 폴더에 새 탭을 열고 ${a.paseo.provider === "codex" ? "Codex" : "Claude Code"}를 시작해요. 직원을 누르면 옆 터미널에서 그 세션을 이어 봐요.` : `Paseo가 이 폴더에서 새 ${a.paseo.provider === "codex" ? "Codex" : "Claude Code"} 세션을 시작해요. 권한 요청은 🔔에 뜨고, 옆 대화 창과 Paseo 앱에서 이어서 말할 수 있어요.`;
@@ -178,14 +188,16 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
     whoNote.textContent = a ? `${a.model || "기본 모델"} · ${a.working ? "지금 다른 일 중이에요. 새 세션으로 따로 시작해서 하던 일은 건드리지 않아요." : "새 세션으로 시작해요."}` : "";
   };
   who.onchange = noteFor;
+  what.oninput = noteFor;
 
   /** A new Claude Code or Codex agent under Paseo, in the folder given: it opens beside the office right away. */
   const assignPaseo = async (a: AgentChoice & { paseo: NonNullable<AgentChoice["paseo"]> }, task: string, goal: string) => {
     const cwd = cwdField.value.trim();
     if (!cwd.startsWith("/")) return say("폴더는 / 로 시작하는 절대 경로로 적어 주세요.", true);
     if (!paseo) return;
-    const prompt = goal ? `${task}\n\n끝났다고 볼 기준: ${goal}\n끝나면 무엇을 했는지와 결과물 위치를 짧게 알려 줘.` : task;
-    const name = task.length > 60 ? `${task.slice(0, 59)}…` : task;
+    const tool = a.paseo.provider === "codex" ? "Codex" : "Claude Code";
+    const prompt = !task ? "" : goal ? `${task}\n\n끝났다고 볼 기준: ${goal}\n끝나면 무엇을 했는지와 결과물 위치를 짧게 알려 줘.` : task;
+    const name = !task ? `새 ${tool} 세션` : task.length > 60 ? `${task.slice(0, 59)}…` : task;
     send.disabled = true;
     try {
       const agentId = await paseo.create({ hostId: a.paseo.hostId, provider: a.paseo.provider, cwd, prompt, title: name });
@@ -193,7 +205,7 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
       what.value = "";
       done.value = "";
       close();
-      say(a.paseo.via === "herdr" ? `${a.name}에게 맡겼어요. 확인을 기다리면 직원 머리 위가 빨갛게 바뀌어요.` : `${a.name}에게 맡겼어요. 권한 요청이 오면 🔔에 나와요.`);
+      say(!task ? `${tool}를 새로 열었어요. 옆 터미널에서 바로 말하면 돼요.` : a.paseo.via === "herdr" ? `${a.name}에게 맡겼어요. 확인을 기다리면 직원 머리 위가 빨갛게 바뀌어요.` : `${a.name}에게 맡겼어요. 권한 요청이 오면 🔔에 나와요.`);
       paseo.openChat(a.paseo.hostId, agentId, name);
     } catch (err) {
       say(`맡기지 못했어요: ${String((err as Error)?.message ?? err)}`, true);
@@ -206,7 +218,7 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
     e.preventDefault();
     const picked = choices().find((x) => x.id === who.value);
     const task = what.value.trim();
-    if (!picked || !task) return;
+    if (!picked || (!task && picked.paseo?.via !== "herdr")) return;
     const goal = done.value.trim();
     if (picked.paseo) return assignPaseo(picked as AgentChoice & { paseo: NonNullable<AgentChoice["paseo"]> }, task, goal);
     const a = picked;
@@ -425,6 +437,7 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
       const before = paseoWaiting.map((w) => w.perm.id).join("|");
       paseoWaiting = waiting;
       paseoTargets = targets;
+      fresh.hidden = !targets.some((t) => t.paseo?.via === "herdr" && t.paseo.provider === "claude");
       if (waiting.map((w) => w.perm.id).join("|") !== before) {
         drawBell();
         drawInbox();
@@ -483,5 +496,7 @@ export function mountDesk(root: HTMLElement, host: ControlUiHost, signal: AbortS
     },
   };
   add.onclick = () => desk.assign("");
+  // The first Herdr Claude Code target is this computer's (the office lists it first).
+  fresh.onclick = () => desk.assign(paseoTargets.find((t) => t.paseo?.via === "herdr" && t.paseo.provider === "claude")?.id ?? "");
   return desk;
 }

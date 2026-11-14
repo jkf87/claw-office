@@ -6811,12 +6811,12 @@ var contract = defineFeatureContract({
     },
     "herdr-create": {
       kind: "action",
-      description: "Open a new Herdr tab in a folder on one computer, start Claude Code or Codex there and give it its first prompt.",
+      description: "Open a new Herdr tab in a folder on one computer and start Claude Code or Codex there, with its first prompt when one is given.",
       input: typebox_exports.Object({
         hostId: typebox_exports.String({ minLength: 1, maxLength: 40 }),
         provider: Cli,
         cwd: typebox_exports.String({ minLength: 1, maxLength: 4096 }),
-        prompt: typebox_exports.String({ minLength: 1, maxLength: 2e4 }),
+        prompt: typebox_exports.String({ maxLength: 2e4 }),
         title: typebox_exports.Optional(typebox_exports.String({ maxLength: 200 }))
       }, { additionalProperties: false }),
       output: typebox_exports.Object({ agentId: typebox_exports.String({ maxLength: 120 }) })
@@ -7495,6 +7495,7 @@ async function herdrRead(hostId, target, lines = 40) {
 async function startInTab(hostId, provider, cwd, title, args) {
   if (!cached) await herdrAgents();
   const m = on(machineOf(hostId));
+  if (!m.length) await trustFolder(provider, cwd).catch(() => false);
   const label = (title || cwd.split("/").pop() || provider).slice(0, 40);
   const tab = JSON.parse(await herdr([...m, "tab", "create", "--cwd", cwd, "--label", label]));
   const pane = tab?.result?.root_pane?.pane_id;
@@ -7507,7 +7508,7 @@ async function startInTab(hostId, provider, cwd, title, args) {
 }
 async function herdrCreate(input2) {
   const { m, name } = await startInTab(input2.hostId, input2.provider, input2.cwd, input2.title, []);
-  await herdr([...m, "agent", "prompt", name, input2.prompt]);
+  if (input2.prompt.trim()) await herdr([...m, "agent", "prompt", name, input2.prompt]);
   return name;
 }
 async function herdrResume(input2) {

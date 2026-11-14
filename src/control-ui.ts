@@ -529,7 +529,7 @@ export default defineControlUiPlugin({
           const waiting: PaseoWaiting[] = paseoHosts.flatMap((h) => h.agents.flatMap((a) => a.permissions.map((perm) => ({ hostId: h.id, agentId: a.id, name: a.title || a.project, where: `${h.label} · ${a.provider === "codex" ? "Codex" : "Claude Code"}`, perm }))));
           // Herdr first (it's the light one); Paseo choices only for computers whose daemon is running.
           const targets: AgentChoice[] = [
-            ...herdrHosts.filter((h) => h.connected).flatMap((h) => (["claude", "codex"] as const).map((provider) => ({ id: `herdr:${h.id}:${provider}`, name: `${provider === "claude" ? "Claude Code" : "Codex"} · ${h.id === HOME.id ? HOME.label : h.label} (Herdr)`, model: "", working: false, paseo: { hostId: `herdr:${h.id}`, provider, via: "herdr" as const } }))),
+            ...herdrHosts.filter((h) => h.connected).sort((x, y) => Number(y.id === HOME.id) - Number(x.id === HOME.id)).flatMap((h) => (["claude", "codex"] as const).map((provider) => ({ id: `herdr:${h.id}:${provider}`, name: `${provider === "claude" ? "Claude Code" : "Codex"} · ${h.id === HOME.id ? HOME.label : h.label} (Herdr)`, model: "", working: false, paseo: { hostId: `herdr:${h.id}`, provider, via: "herdr" as const } }))),
             ...paseoHosts.filter((h) => h.connected).flatMap((h) => (["claude", "codex"] as const).map((provider) => ({ id: `paseo:${h.id}:${provider}`, name: `${provider === "claude" ? "Claude Code" : "Codex"} · ${h.label} (Paseo)`, model: "", working: false, paseo: { hostId: h.id, provider } }))),
           ];
           desk.setPaseo(waiting, targets);

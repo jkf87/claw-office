@@ -2,7 +2,7 @@
   "id": "claw-office",
   "name": "Claw Office",
   "description": "A 3D office of this computer's and the tailnet's agents in the Control UI.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -12,9 +12,9 @@
     "onStartup": true
   },
   "controlUi": {
-    "entry": "dist/control-ui/fe3116d84f1e4dcc/index.js",
+    "entry": "dist/control-ui/48bd314ffdc85a7f/index.js",
     "styles": [
-      "dist/control-ui/fe3116d84f1e4dcc/index.css"
+      "dist/control-ui/48bd314ffdc85a7f/index.css"
     ]
   },
   "contracts": {

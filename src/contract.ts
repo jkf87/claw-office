@@ -173,12 +173,12 @@ export const contract = defineFeatureContract({
     },
     "herdr-create": {
       kind: "action",
-      description: "Open a new Herdr tab in a folder on one computer, start Claude Code or Codex there and give it its first prompt.",
+      description: "Open a new Herdr tab in a folder on one computer and start Claude Code or Codex there, with its first prompt when one is given.",
       input: Type.Object({
         hostId: Type.String({ minLength: 1, maxLength: 40 }),
         provider: Cli,
         cwd: Type.String({ minLength: 1, maxLength: 4096 }),
-        prompt: Type.String({ minLength: 1, maxLength: 20000 }),
+        prompt: Type.String({ maxLength: 20000 }),
         title: Type.Optional(Type.String({ maxLength: 200 })),
       }, { additionalProperties: false }),
       output: Type.Object({ agentId: Type.String({ maxLength: 120 }) }),

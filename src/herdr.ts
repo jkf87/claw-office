@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { trustFolder } from "./trust.js";
 
 // Herdr (herdr.dev) runs Claude Code and Codex in terminal panes on this computer and, over its saved SSH
 // machines, on the others. The office reads each one's agents with the herdr CLI (one short process per
@@ -100,6 +101,9 @@ export async function herdrRead(hostId: string, target: string, lines = 40): Pro
 async function startInTab(hostId: string, provider: "claude" | "codex", cwd: string, title: string | undefined, args: string[]): Promise<{ m: string[]; name: string }> {
   if (!cached) await herdrAgents();
   const m = on(machineOf(hostId));
+  // A folder the CLI hasn't opened before asks "Do you trust this folder?" and the start waits on it: on this
+  // computer the office answers it first, as it does before opening a terminal (another computer's own CLI asks there).
+  if (!m.length) await trustFolder(provider, cwd).catch(() => false);
   const label = (title || cwd.split("/").pop() || provider).slice(0, 40);
   const tab = JSON.parse(await herdr([...m, "tab", "create", "--cwd", cwd, "--label", label]));
   const pane = tab?.result?.root_pane?.pane_id;
@@ -115,7 +119,7 @@ async function startInTab(hostId: string, provider: "claude" | "codex", cwd: str
 /** A new tab in the folder, the CLI started in it, then the first prompt. */
 export async function herdrCreate(input: { hostId: string; provider: "claude" | "codex"; cwd: string; prompt: string; title?: string }): Promise<string> {
   const { m, name } = await startInTab(input.hostId, input.provider, input.cwd, input.title, []);
-  await herdr([...m, "agent", "prompt", name, input.prompt]);
+  if (input.prompt.trim()) await herdr([...m, "agent", "prompt", name, input.prompt]);
   return name;
 }
 
